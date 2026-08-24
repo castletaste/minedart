@@ -92,6 +92,13 @@ Native FlutterGPU accepts the optional identity/revision metadata and ignores
 it. A compile-time `FLAME_3D_WEBGPU_BIND_CACHE` switch defaults to `true`; when
 false the Web backend follows the upstream allocation/bind path.
 
+The production default is `const bool.fromEnvironment(...)`. An internal
+constructor override exists only for fake-device tests, so enabled and disabled
+paths run in one VM suite. Benchmark arms remain separate release builds:
+
+- cache on: default build;
+- cache off: `--dart-define=FLAME_3D_WEBGPU_BIND_CACHE=false`.
+
 ## Deterministic cache tests
 
 - Idempotent uniform set keeps revision; changed bytes increment it.
@@ -104,6 +111,39 @@ false the Web backend follows the upstream allocation/bind path.
 - With the kill switch off, the observed upload/bind-group call sequence equals
   upstream.
 - Native analyze/tests prove the metadata-only API addition is inert.
+
+### Executable test seam and CI
+
+The vendored package adds one platform-neutral internal module under
+`lib/src/graphics/backend/web_gpu/cache_policy.dart`. It imports neither
+`dart:js_interop` nor `dart:ui_web`; the real Web backend supplies opaque
+pipeline/layout/buffer/view/sampler tokens and allocation/create callbacks.
+The module owns frame-local keys, hit/miss accounting and frame reset. It is
+public only under `src/` with `@visibleForTesting` types and is not exported by
+the package facade.
+
+The intentional upstream-diff allow-list therefore includes only:
+
+- retained shader binding/revision code;
+- generic `GraphicsDevice` metadata plumbing;
+- inert native backend signatures;
+- Web backend integration plus `cache_policy.dart`;
+- vendored pubspec/analysis/provenance/test files.
+
+Test routing is explicit:
+
+- VM tests: provenance SHA-256 drift, compare-before-write revisions, partial
+  setters, fake four-frame pool rotation, complete bind keys, texture-view
+  lifetime tokens, fallback resources, enabled/disabled call sequences and
+  bounded cache counters;
+- headless Chrome test: conditional Web import/compile smoke plus the fake-token
+  cache suite; it does not request a real adapter/device;
+- live foreground Chrome release QA: actual adapter/device, real createView /
+  upload / bind hit counters, 60-second bounded-memory soak and visual parity.
+
+The project CI must add `third_party/flame_3d` analyze + VM tests + focused
+`flutter test --platform chrome` before app analyze/tests. A real WebGPU device
+is explicitly not claimed by headless CI; that remains release evidence.
 
 ## Allocation-stable telemetry
 
@@ -162,7 +202,8 @@ audio or unrelated code. Never benchmark the disposable spike world.
 
 For cache off/on at rd6 and rd10:
 
-1. Release Wasm in foreground Chrome WebGPU, DPR exactly 2, render scale 1.0,
+1. Release Wasm in foreground Chrome WebGPU, DPR exactly 2, with no render-scale
+   feature introduced (native target equals CSS viewport times DPR),
    `crossOriginIsolated=true` and constant viewport.
 2. Assert visible document and the requested render distance/draw count.
 3. Wait for mesh queue zero plus at least 120 stable frames.
@@ -172,6 +213,9 @@ For cache off/on at rd6 and rd10:
 6. Exclude load/decode/warm-up. Keep F3 state identical between arms.
 7. Success requires at least 15% lower CPU-render median and no frame-p95
    regression larger than `max(0.2 ms, 3%)`.
+8. After each pass's first miss, group-1 bind-group hit rate must be at least
+   90%; otherwise the cache target or telemetry is wrong and the perf claim is
+   rejected even if timing noise looks favorable.
 
 Screenshots and live checks cover fog, alpha cutout, water, depth, Pointer Lock,
 LMB/RMB, Escape/re-capture and a clean release console. The fixed WebGPU to 2D
