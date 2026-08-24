@@ -334,31 +334,6 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     }
   }
 
-  Future<void> _showMinimapEditor() async {
-    final modalContext = _navigatorContext;
-    if (_modalOpen || !mounted || modalContext == null) return;
-    _modalOpen = true;
-    try {
-      await showDialog<void>(
-        context: modalContext,
-        builder: (dialogContext) => ModalInputRegion(
-          onInputCaptureChanged: _onModalInputCaptureChanged,
-          child: MinimapEditorDialog(
-            state: _minimap,
-            blockId:
-                _builder.selectedBlockId ?? _runtime.game.hud.selectedBlock,
-            onPaintSurface: (x, z, blockId, radius) {
-              _runtime.game.paintSurface(x, z, blockId, radius);
-              _minimap.value = _createMinimapState();
-            },
-          ),
-        ),
-      );
-    } finally {
-      _modalOpen = false;
-    }
-  }
-
   WorldLibraryCallbacks _worldCallbacks(
     BuildContext dialogContext,
   ) => WorldLibraryCallbacks(
@@ -629,6 +604,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
         kHudOverlayId: (context, game) => HudOverlay(
           hud: game.hud,
           frameMetrics: game.frameMetrics,
+          onCapture: game.requestMouseCapture,
           onPrimary: kIsWeb ? () {} : game.breakTargetBlock,
           onSecondary: kIsWeb ? () {} : game.placeSelectedBlock,
         ),
@@ -673,7 +649,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
                 },
                 child: Focus(autofocus: true, child: gameWidget),
               ),
-              MinimapOverlay(state: _minimap, onOpen: _showMinimapEditor),
+              MinimapOverlay(state: _minimap),
               if (_showStartupControls) const _StartupControlsOverlay(),
               if (_switchingWorld)
                 const ColoredBox(

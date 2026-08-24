@@ -16,7 +16,6 @@ sealed class MouseLookEvent {
         captured: value['captured'] == true,
         reason: value['reason'] as String?,
       ),
-      'click' => const MouseCaptureRequested(),
       _ => null,
     };
   }
@@ -34,11 +33,6 @@ final class MouseCaptureChanged extends MouseLookEvent {
 
   final bool captured;
   final String? reason;
-}
-
-/// A click reached the macOS game window while the mouse was not captured.
-final class MouseCaptureRequested extends MouseLookEvent {
-  const MouseCaptureRequested();
 }
 
 /// Primary press delivered by the browser Pointer Lock bridge.

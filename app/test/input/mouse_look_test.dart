@@ -28,16 +28,9 @@ void main() {
     expect(capture.reason, 'window-focus-lost');
   });
 
-  test('parses native window click capture request', () {
-    final event = MouseLookEvent.fromPlatform(<String, Object>{
-      'type': 'click',
-    });
-
-    expect(event, isA<MouseCaptureRequested>());
-  });
-
   test('ignores malformed and unknown events', () {
     expect(MouseLookEvent.fromPlatform(null), isNull);
+    expect(MouseLookEvent.fromPlatform({'type': 'click'}), isNull);
     expect(MouseLookEvent.fromPlatform({'type': 'other'}), isNull);
   });
 }

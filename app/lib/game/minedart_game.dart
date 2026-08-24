@@ -154,6 +154,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   bool _noclip = false;
   bool _mouseCaptureUnavailable = false;
   bool _hadMouseCapture = false;
+  bool _mouseCapturePending = false;
   bool _uiInputCaptured = false;
   bool simulationPaused = false;
   int _renderDistanceChunks = 6;
@@ -303,32 +304,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   static int _editAudioSeed(int x, int y, int z) =>
       x * 73856093 ^ y * 19349663 ^ z * 83492791;
 
-  void paintSurface(int centerX, int centerZ, int blockId, int radius) {
-    final builder = WorldChangeSetBuilder(voxelWorld);
-    final safeRadius = radius.clamp(0, 4);
-    for (var dz = -safeRadius; dz <= safeRadius; dz++) {
-      for (var dx = -safeRadius; dx <= safeRadius; dx++) {
-        if (dx * dx + dz * dz > safeRadius * safeRadius) continue;
-        final x = centerX + dx;
-        final z = centerZ + dz;
-        if (x < 0 ||
-            z < 0 ||
-            x >= WorldDims.worldBlocksX ||
-            z >= WorldDims.worldBlocksZ) {
-          continue;
-        }
-        final y = voxelWorld.skyHeight[x + z * WorldDims.worldBlocksX];
-        if (y >= WorldDims.worldBlocksY) continue;
-        builder.set(x, y, z, Blocks.pack(blockId));
-      }
-    }
-    final changes = builder.build();
-    if (changes.isEmpty) return;
-    remeshDirty(changes.dirtyChunks);
-    _recordUserEdit(changes);
-    hud.recordAction('map paint ${changes.changes.length}');
-  }
-
   @override
   Color backgroundColor() => _skyColor;
 
@@ -396,12 +371,16 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   void onTapDown(TapDownEvent event) {
-    if (_uiInputCaptured) return;
-    if (kIsWeb) {
-      unawaited(_captureBrowserMouse());
-    } else {
-      unawaited(_captureMouse());
-    }
+    requestMouseCapture();
+  }
+
+  /// Requests relative mouse input from a pointer event that hit the game.
+  /// UI overlays never call this, so their clicks cannot recapture the cursor.
+  void requestMouseCapture() {
+    if (_uiInputCaptured || _mouseCapturePending) return;
+    _mouseCapturePending = true;
+    final request = kIsWeb ? _captureBrowserMouse() : _captureMouse();
+    unawaited(request.whenComplete(() => _mouseCapturePending = false));
   }
 
   void _updateChunkView({bool force = false}) {
@@ -714,8 +693,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         // the web equivalent of Escape; programmatic modal releases are
         // ignored because setUiInputCaptured(true) happens first.
         if (userReleasedWebCapture) onPauseRequested?.call();
-      case MouseCaptureRequested():
-        if (!_uiInputCaptured) unawaited(_captureMouse());
       case MousePrimaryPressed():
         breakTargetBlock();
       case MouseSecondaryPressed():

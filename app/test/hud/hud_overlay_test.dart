@@ -14,6 +14,7 @@ void main() {
   ) async {
     final hud = HudState();
     addTearDown(hud.dispose);
+    var captures = 0;
     var primary = 0;
     var secondary = 0;
 
@@ -22,6 +23,7 @@ void main() {
         textDirection: TextDirection.ltr,
         child: HudOverlay(
           hud: hud,
+          onCapture: () => captures++,
           onPrimary: () => primary++,
           onSecondary: () => secondary++,
         ),
@@ -38,6 +40,7 @@ void main() {
     await left.up();
     expect(primary, 1);
     expect(secondary, 0);
+    expect(captures, 1);
 
     final right = await tester.startGesture(
       center,
@@ -48,6 +51,7 @@ void main() {
     await right.up();
     expect(primary, 1);
     expect(secondary, 1);
+    expect(captures, 2);
 
     final scroll = TestPointer(4, PointerDeviceKind.mouse);
     scroll.hover(center);
@@ -67,7 +71,12 @@ void main() {
     await tester.pumpWidget(
       Directionality(
         textDirection: TextDirection.ltr,
-        child: HudOverlay(hud: hud, onPrimary: () {}, onSecondary: () {}),
+        child: HudOverlay(
+          hud: hud,
+          onCapture: () {},
+          onPrimary: () {},
+          onSecondary: () {},
+        ),
       ),
     );
     expect(find.textContaining('fps'), findsNothing);
@@ -84,6 +93,7 @@ void main() {
       addTearDown(hud.dispose);
       var primary = 0;
       var secondary = 0;
+      var captures = 0;
       final semantics = tester.ensureSemantics();
 
       await tester.pumpWidget(
@@ -91,6 +101,7 @@ void main() {
           textDirection: TextDirection.ltr,
           child: HudOverlay(
             hud: hud,
+            onCapture: () => captures++,
             onPrimary: () => primary++,
             onSecondary: () => secondary++,
           ),
@@ -113,6 +124,7 @@ void main() {
       expect(hud.selectedSlot.value, 2);
       expect(primary, 0);
       expect(secondary, 0);
+      expect(captures, 0);
 
       await tester.tap(slot);
       await tester.pump();
@@ -135,7 +147,12 @@ void main() {
       await tester.pumpWidget(
         Directionality(
           textDirection: TextDirection.ltr,
-          child: HudOverlay(hud: hud, onPrimary: () {}, onSecondary: () {}),
+          child: HudOverlay(
+            hud: hud,
+            onCapture: () {},
+            onPrimary: () {},
+            onSecondary: () {},
+          ),
         ),
       );
       await tester.pump();

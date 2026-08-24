@@ -29,6 +29,7 @@ const String kHudOverlayId = 'hud';
 class HudOverlay extends StatefulWidget {
   const HudOverlay({
     required this.hud,
+    required this.onCapture,
     required this.onPrimary,
     required this.onSecondary,
     this.frameMetrics,
@@ -36,6 +37,9 @@ class HudOverlay extends StatefulWidget {
   });
 
   final HudState hud;
+
+  /// Requests pointer lock/native relative mouse only for the game surface.
+  final VoidCallback onCapture;
 
   /// Left click: break the targeted block.
   final VoidCallback onPrimary;
@@ -81,6 +85,7 @@ class _HudOverlayState extends State<HudOverlay> {
   void _handlePointerDown(PointerDownEvent event) {
     if (event.kind != PointerDeviceKind.mouse) return;
     if (_isOverHotbar(event.position)) return;
+    widget.onCapture();
     if (event.buttons & kPrimaryMouseButton != 0) {
       widget.onPrimary();
     } else if (event.buttons & kSecondaryMouseButton != 0) {

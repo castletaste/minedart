@@ -32,7 +32,6 @@ final class MouseCaptureController: NSObject, FlutterStreamHandler {
   private weak var window: NSWindow?
   private var eventSink: FlutterEventSink?
   private var localMonitor: Any?
-  private var clickMonitor: Any?
   private var observers: [NSObjectProtocol] = []
   private var cursorHidden = false
   private(set) var isCaptured = false
@@ -72,15 +71,6 @@ final class MouseCaptureController: NSObject, FlutterStreamHandler {
     }
     eventChannel.setStreamHandler(self)
 
-    clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) {
-      [weak self] event in
-      guard let self, event.window === self.window, !self.isCaptured else {
-        return event
-      }
-      self.eventSink?(["type": "click"])
-      return event
-    }
-
     let center = NotificationCenter.default
     observers.append(center.addObserver(
       forName: NSApplication.didResignActiveNotification,
@@ -101,9 +91,6 @@ final class MouseCaptureController: NSObject, FlutterStreamHandler {
 
   deinit {
     release(reason: "deinit")
-    if let clickMonitor {
-      NSEvent.removeMonitor(clickMonitor)
-    }
     observers.forEach(NotificationCenter.default.removeObserver)
   }
 
