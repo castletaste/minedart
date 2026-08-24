@@ -1,0 +1,31 @@
+<!DOCTYPE html><html><body><div id=out>init</div><script>
+function report(msg) {
+  return fetch('/REPORT?' + encodeURIComponent(msg)).catch(function(){});
+}
+(async () => {
+  const log = [];
+  try {
+    log.push('gpu=' + (!!navigator.gpu));
+    if (navigator.gpu) {
+      let a = await navigator.gpu.requestAdapter();
+      log.push('adapter=' + (a ? 'OK' : 'null'));
+      if (!a) { a = await navigator.gpu.requestAdapter({forceFallbackAdapter:true}); log.push('fallback=' + (a?'OK':'null')); }
+      if (a) {
+        const i = a.info || {};
+        log.push('vendor:' + i.vendor + ',arch:' + i.architecture + ',desc:' + i.description);
+        const d = await a.requestDevice();
+        log.push('device=' + (d ? 'OK' : 'null'));
+        const oc = new OffscreenCanvas(64, 64);
+        const ctx = oc.getContext('webgpu');
+        log.push('offscreen_webgpu_ctx=' + (ctx ? 'OK' : 'null'));
+        if (ctx) {
+          ctx.configure({device: d, format: 'rgba8unorm'});
+          log.push('configure_rgba8unorm=OK');
+        }
+      }
+    }
+  } catch (e) { log.push('ERR:' + e); }
+  await report('PROBE ' + log.join(' | '));
+  document.getElementById('out').textContent = 'done';
+})();
+</script></body></html>

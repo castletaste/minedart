@@ -1,0 +1,35 @@
+<!DOCTYPE html><html><body><div id=out>init</div><script>
+function report(msg) {
+  var img = new Image();
+  img.src = '/REPORT/' + encodeURIComponent(msg) + '?t=' + Date.now();
+  window.__keep = window.__keep || []; window.__keep.push(img);
+}
+report('S0_script_running');
+(async () => {
+  const t0 = performance.now();
+  const ms = () => Math.round(performance.now() - t0);
+  try {
+    report('S1_gpu=' + (!!navigator.gpu));
+    if (!navigator.gpu) { report('S_NO_WEBGPU'); return; }
+    const a = await navigator.gpu.requestAdapter();
+    report('S2_adapter=' + (a ? 'OK' : 'null') + '_at' + ms() + 'ms');
+    if (!a) { report('S_DONE'); return; }
+    const i = a.info || {};
+    report('S3_vendor:' + i.vendor + ',arch:' + i.architecture);
+    const d = await a.requestDevice();
+    report('S4_device=' + (d ? 'OK' : 'null') + '_at' + ms() + 'ms');
+    const oc = new OffscreenCanvas(64, 64);
+    const ctx = oc.getContext('webgpu');
+    report('S5_offscreen_webgpu_ctx=' + (ctx ? 'OK' : 'null'));
+    ctx.configure({device: d, format: 'rgba8unorm'});
+    report('S6_configure_rgba8unorm=OK');
+    // Mimic flame_3d: blit webgpu canvas to 2D canvas, transferToImageBitmap.
+    const blit = new OffscreenCanvas(64, 64);
+    const c2d = blit.getContext('2d');
+    c2d.drawImage(oc, 0, 0);
+    const bmp = blit.transferToImageBitmap();
+    report('S7_blit_transferToImageBitmap=OK_' + bmp.width + 'x' + bmp.height);
+    report('S_DONE_at' + ms() + 'ms');
+  } catch (e) { report('S_ERR_' + e); }
+})();
+</script></body></html>

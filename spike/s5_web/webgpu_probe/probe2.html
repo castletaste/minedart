@@ -1,0 +1,37 @@
+<!DOCTYPE html><html><body><div id=out>init</div><script>
+function report(msg) {
+  var img = new Image();
+  img.src = '/REPORT/' + encodeURIComponent(msg) + '?t=' + Date.now();
+  window.__keep = window.__keep || []; window.__keep.push(img);
+  return fetch('/REPORTF/' + encodeURIComponent(msg)).catch(function(){});
+}
+report('STAGE0_script_running');
+(async () => {
+  const log = [];
+  try {
+    log.push('gpu=' + (!!navigator.gpu));
+    report('STAGE1_' + log.join('_'));
+    if (navigator.gpu) {
+      const timeout = (p, ms, label) => Promise.race([p, new Promise(r => setTimeout(() => r('TIMEOUT_' + label), ms))]);
+      let a = await timeout(navigator.gpu.requestAdapter(), 8000, 'adapter');
+      report('STAGE2_adapter_' + (typeof a === 'string' ? a : (a ? 'OK' : 'null')));
+      if (a && typeof a !== 'string') {
+        const i = a.info || {};
+        report('STAGE3_info_vendor:' + i.vendor + ',arch:' + i.architecture + ',desc:' + i.description);
+        const d = await timeout(a.requestDevice(), 8000, 'device');
+        report('STAGE4_device_' + (typeof d === 'string' ? d : (d ? 'OK' : 'null')));
+        if (d && typeof d !== 'string') {
+          const oc = new OffscreenCanvas(64, 64);
+          const ctx = oc.getContext('webgpu');
+          report('STAGE5_offscreen_ctx_' + (ctx ? 'OK' : 'null'));
+          if (ctx) {
+            ctx.configure({device: d, format: 'rgba8unorm'});
+            report('STAGE6_configure_rgba8unorm_OK');
+          }
+        }
+      }
+    }
+  } catch (e) { report('STAGE_ERR_' + e); }
+  report('STAGE_DONE');
+})();
+</script></body></html>

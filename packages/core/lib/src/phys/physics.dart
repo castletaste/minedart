@@ -1,0 +1,309 @@
+/// Fixed-step player movement and voxel collision resolution.
+library;
+
+import 'dart:math' as math;
+
+import '../block.dart';
+import '../chunk.dart';
+import '../world.dart';
+import 'aabb.dart';
+import 'player_body.dart';
+
+final class PlayerInput {
+  const PlayerInput({
+    this.moveX = 0,
+    this.moveZ = 0,
+    this.jump = false,
+    this.sprint = false,
+  });
+
+  static const PlayerInput idle = PlayerInput();
+
+  /// World-space movement axes. Values outside the unit circle are normalized.
+  final double moveX;
+  final double moveZ;
+  final bool jump;
+  final bool sprint;
+}
+
+final class PhysicsSim {
+  static const double fixedDt = 1 / 60;
+  static const double gravity = 32;
+  static const double terminalVelocity = 78;
+  static const double jumpVelocity = 8.4;
+  static const double walkSpeed = 4.3;
+  static const double sprintSpeed = 5.6;
+  static const double collisionEpsilon = 1e-4;
+
+  static const double _groundAcceleration = 52;
+  static const double _airAcceleration = 9;
+  static const double _waterAcceleration = 18;
+  static const double _waterSpeed = 2.2;
+  static const double _waterVerticalSpeed = 3.4;
+  static const double _waterBuoyancy = 6;
+  static const double _waterGravity = 8;
+  static const double _waterDrag = 0.88;
+
+  final Aabb _bodyBounds = Aabb();
+  double _accumulator = 0;
+  bool _jumpWasDown = false;
+
+  double get accumulator => _accumulator;
+
+  /// Advances by as many 1/60 s ticks as [frameDt] contains.
+  ///
+  /// The remainder is retained for the next frame. No time is discarded, so a
+  /// temporary 0.5 s frame still receives full fixed-step collision handling.
+  int advance(
+    VoxelWorld world,
+    PlayerBody body,
+    PlayerInput input,
+    double frameDt,
+  ) {
+    if (!frameDt.isFinite || frameDt <= 0) return 0;
+    _accumulator += frameDt;
+    var steps = 0;
+    while (_accumulator + 1e-12 >= fixedDt) {
+      step(world, body, input, fixedDt);
+      _accumulator -= fixedDt;
+      steps++;
+    }
+    if (_accumulator < 0) _accumulator = 0;
+    return steps;
+  }
+
+  /// Performs one simulation tick. [advance] is the normal frame-facing API.
+  void step(VoxelWorld world, PlayerBody body, PlayerInput input, double dt) {
+    if (!dt.isFinite || dt <= 0) return;
+
+    body.writeAabb(_bodyBounds);
+    final inWater = _intersectsWater(world, _bodyBounds);
+
+    var inputX = input.moveX;
+    var inputZ = input.moveZ;
+    final inputLengthSquared = inputX * inputX + inputZ * inputZ;
+    if (inputLengthSquared > 1) {
+      final inverseLength = 1 / math.sqrt(inputLengthSquared);
+      inputX *= inverseLength;
+      inputZ *= inverseLength;
+    }
+
+    final targetSpeed = inWater
+        ? _waterSpeed
+        : (input.sprint ? sprintSpeed : walkSpeed);
+    final acceleration = inWater
+        ? _waterAcceleration
+        : (body.onGround ? _groundAcceleration : _airAcceleration);
+    body.velocity.x = _approach(
+      body.velocity.x,
+      inputX * targetSpeed,
+      acceleration * dt,
+    );
+    body.velocity.z = _approach(
+      body.velocity.z,
+      inputZ * targetSpeed,
+      acceleration * dt,
+    );
+
+    final pressedJump = input.jump && !_jumpWasDown;
+    if (inWater) {
+      body.velocity.x *= _waterDrag;
+      body.velocity.z *= _waterDrag;
+      body.velocity.y *= _waterDrag;
+      // Mild sink when idle; holding jump swims up.
+      body.velocity.y -= (_waterGravity - _waterBuoyancy) * dt;
+      if (input.jump) {
+        body.velocity.y = _approach(
+          body.velocity.y,
+          _waterVerticalSpeed,
+          _waterAcceleration * dt,
+        );
+      }
+    } else {
+      body.velocity.y = math.max(
+        body.velocity.y - gravity * dt,
+        -terminalVelocity,
+      );
+      if (pressedJump && body.onGround) {
+        body.velocity.y = jumpVelocity;
+        body.onGround = false;
+      }
+    }
+    _jumpWasDown = input.jump;
+
+    body.onGround = false;
+    _moveX(world, body, body.velocity.x * dt);
+    _moveZ(world, body, body.velocity.z * dt);
+    _moveY(world, body, body.velocity.y * dt);
+  }
+
+  static double _approach(double current, double target, double amount) {
+    if (current < target) return math.min(current + amount, target);
+    if (current > target) return math.max(current - amount, target);
+    return current;
+  }
+
+  void _moveX(VoxelWorld world, PlayerBody body, double delta) {
+    if (delta == 0) return;
+    body.writeAabb(_bodyBounds);
+    var allowed = delta;
+    final minY = (_bodyBounds.minY + collisionEpsilon).floor();
+    final maxY = (_bodyBounds.maxY - collisionEpsilon).floor();
+    final minZ = (_bodyBounds.minZ + collisionEpsilon).floor();
+    final maxZ = (_bodyBounds.maxZ - collisionEpsilon).floor();
+
+    if (delta > 0) {
+      final firstX = _bodyBounds.maxX.floor();
+      final lastX = (_bodyBounds.maxX + delta).floor();
+      for (var x = firstX; x <= lastX; x++) {
+        for (var y = minY; y <= maxY; y++) {
+          for (var z = minZ; z <= maxZ; z++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = x - _bodyBounds.maxX - collisionEpsilon;
+            if (candidate >= -collisionEpsilon && candidate < allowed) {
+              allowed = math.max(0, candidate);
+            }
+          }
+        }
+      }
+    } else {
+      final firstX = (_bodyBounds.minX - collisionEpsilon).floor();
+      final lastX = (_bodyBounds.minX + delta).floor();
+      for (var x = firstX; x >= lastX; x--) {
+        for (var y = minY; y <= maxY; y++) {
+          for (var z = minZ; z <= maxZ; z++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = x + 1 - _bodyBounds.minX + collisionEpsilon;
+            if (candidate <= collisionEpsilon && candidate > allowed) {
+              allowed = math.min(0, candidate);
+            }
+          }
+        }
+      }
+    }
+
+    body.position.x += allowed;
+    if (allowed != delta) body.velocity.x = 0;
+  }
+
+  void _moveZ(VoxelWorld world, PlayerBody body, double delta) {
+    if (delta == 0) return;
+    body.writeAabb(_bodyBounds);
+    var allowed = delta;
+    final minX = (_bodyBounds.minX + collisionEpsilon).floor();
+    final maxX = (_bodyBounds.maxX - collisionEpsilon).floor();
+    final minY = (_bodyBounds.minY + collisionEpsilon).floor();
+    final maxY = (_bodyBounds.maxY - collisionEpsilon).floor();
+
+    if (delta > 0) {
+      final firstZ = _bodyBounds.maxZ.floor();
+      final lastZ = (_bodyBounds.maxZ + delta).floor();
+      for (var z = firstZ; z <= lastZ; z++) {
+        for (var y = minY; y <= maxY; y++) {
+          for (var x = minX; x <= maxX; x++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = z - _bodyBounds.maxZ - collisionEpsilon;
+            if (candidate >= -collisionEpsilon && candidate < allowed) {
+              allowed = math.max(0, candidate);
+            }
+          }
+        }
+      }
+    } else {
+      final firstZ = (_bodyBounds.minZ - collisionEpsilon).floor();
+      final lastZ = (_bodyBounds.minZ + delta).floor();
+      for (var z = firstZ; z >= lastZ; z--) {
+        for (var y = minY; y <= maxY; y++) {
+          for (var x = minX; x <= maxX; x++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = z + 1 - _bodyBounds.minZ + collisionEpsilon;
+            if (candidate <= collisionEpsilon && candidate > allowed) {
+              allowed = math.min(0, candidate);
+            }
+          }
+        }
+      }
+    }
+
+    body.position.z += allowed;
+    if (allowed != delta) body.velocity.z = 0;
+  }
+
+  void _moveY(VoxelWorld world, PlayerBody body, double delta) {
+    if (delta == 0) return;
+    body.writeAabb(_bodyBounds);
+    var allowed = delta;
+    final minX = (_bodyBounds.minX + collisionEpsilon).floor();
+    final maxX = (_bodyBounds.maxX - collisionEpsilon).floor();
+    final minZ = (_bodyBounds.minZ + collisionEpsilon).floor();
+    final maxZ = (_bodyBounds.maxZ - collisionEpsilon).floor();
+
+    if (delta > 0) {
+      final firstY = _bodyBounds.maxY.floor();
+      final lastY = (_bodyBounds.maxY + delta).floor();
+      for (var y = firstY; y <= lastY; y++) {
+        for (var z = minZ; z <= maxZ; z++) {
+          for (var x = minX; x <= maxX; x++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = y - _bodyBounds.maxY - collisionEpsilon;
+            if (candidate >= -collisionEpsilon && candidate < allowed) {
+              allowed = math.max(0, candidate);
+            }
+          }
+        }
+      }
+    } else {
+      final firstY = (_bodyBounds.minY - collisionEpsilon).floor();
+      final lastY = (_bodyBounds.minY + delta).floor();
+      for (var y = firstY; y >= lastY; y--) {
+        for (var z = minZ; z <= maxZ; z++) {
+          for (var x = minX; x <= maxX; x++) {
+            if (!_isSolid(world, x, y, z)) continue;
+            final candidate = y + 1 - _bodyBounds.minY + collisionEpsilon;
+            if (candidate <= collisionEpsilon && candidate > allowed) {
+              allowed = math.min(0, candidate);
+            }
+          }
+        }
+      }
+    }
+
+    body.position.y += allowed;
+    if (allowed != delta) {
+      if (delta < 0) body.onGround = true;
+      body.velocity.y = 0;
+    }
+  }
+
+  static bool _isSolid(VoxelWorld world, int x, int y, int z) {
+    // The finite world is fenced: anything beyond the X/Z border acts as a
+    // solid wall so the player cannot walk off the map. Vertical out-of-range
+    // stays non-solid (bedrock already seals the bottom).
+    if (x < 0 ||
+        z < 0 ||
+        x >= WorldDims.worldBlocksX ||
+        z >= WorldDims.worldBlocksZ) {
+      return y >= 0 && y < WorldDims.worldBlocksY;
+    }
+    final id = Blocks.id(world.blockAt(x, y, z));
+    if (id <= Blocks.air || id >= blockDefs.length) return false;
+    return blockDefs[id]!.solid;
+  }
+
+  static bool _intersectsWater(VoxelWorld world, Aabb bounds) {
+    final minX = (bounds.minX + collisionEpsilon).floor();
+    final maxX = (bounds.maxX - collisionEpsilon).floor();
+    final minY = (bounds.minY + collisionEpsilon).floor();
+    final maxY = (bounds.maxY - collisionEpsilon).floor();
+    final minZ = (bounds.minZ + collisionEpsilon).floor();
+    final maxZ = (bounds.maxZ - collisionEpsilon).floor();
+    for (var y = minY; y <= maxY; y++) {
+      for (var z = minZ; z <= maxZ; z++) {
+        for (var x = minX; x <= maxX; x++) {
+          if (Blocks.id(world.blockAt(x, y, z)) == Blocks.water) return true;
+        }
+      }
+    }
+    return false;
+  }
+}

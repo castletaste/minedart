@@ -1,0 +1,38 @@
+{
+    "id": "./",
+    "name": "Minedart Classic Showcase",
+    "short_name": "Minedart",
+    "start_url": "./?source=pwa",
+    "scope": "./",
+    "display": "standalone",
+    "display_override": ["window-controls-overlay", "standalone"],
+    "background_color": "#82C8FF",
+    "theme_color": "#153C25",
+    "description": "A finite voxel world and adaptive Flutter builder studio powered by WebGPU.",
+    "categories": ["games", "entertainment", "developer"],
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

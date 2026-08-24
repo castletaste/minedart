@@ -1,0 +1,20 @@
+<!DOCTYPE html><html><body><div id=out>init</div><script>
+(async () => {
+  const log = [];
+  log.push('navigator.gpu present: ' + (!!navigator.gpu));
+  if (navigator.gpu) {
+    try {
+      let a = await navigator.gpu.requestAdapter();
+      log.push('adapter: ' + (a ? 'OK' : 'null'));
+      if (!a) { a = await navigator.gpu.requestAdapter({forceFallbackAdapter:true}); log.push('fallbackAdapter: ' + (a?'OK':'null')); }
+      if (a) {
+        const info = a.info || {};
+        log.push('vendor=' + info.vendor + ' arch=' + info.architecture + ' desc=' + info.description);
+        const d = await a.requestDevice();
+        log.push('device: ' + (d ? 'OK' : 'null'));
+      }
+    } catch (e) { log.push('ERR ' + e); }
+  }
+  document.getElementById('out').textContent = 'PROBE_RESULT ' + log.join(' | ');
+})();
+</script></body></html>
