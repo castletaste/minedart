@@ -53,6 +53,20 @@ void main() {
             .whereType<MeshComponent>()
             .toList();
         expect(components, hasLength(2));
+        expect(manager.retainedComponentCount, 2);
+        expect(manager.retainedMeshBytes, _meshBytes(data));
+        manager.apply(
+          ChunkMeshData(
+            chunkIndex: data.chunkIndex,
+            revision: data.revision - 1,
+            opaqueVertices: Float32List(0),
+            opaqueIndices: Uint16List(0),
+            translucentVertices: Float32List(0),
+            translucentIndices: Uint16List(0),
+          ),
+        );
+        expect(manager.retainedComponentCount, 2);
+        expect(manager.retainedMeshBytes, _meshBytes(data));
         final surfaces = components
             .map((component) => component.mesh.surfaces.single as PackedSurface)
             .toList();
@@ -130,12 +144,27 @@ void main() {
       manager.apply(data);
 
       expect(manager.loadedChunkCount, 1);
+      expect(manager.retainedComponentCount, 1);
+      expect(manager.retainedMeshBytes, _meshBytes(data));
       expect(renderWorld.children.whereType<MeshComponent>(), hasLength(1));
 
       manager.apply(
         ChunkMeshData(
           chunkIndex: data.chunkIndex,
           revision: data.revision + 1,
+          opaqueVertices: data.opaqueVertices,
+          opaqueIndices: data.opaqueIndices,
+          translucentVertices: data.translucentVertices,
+          translucentIndices: data.translucentIndices,
+        ),
+      );
+      expect(manager.retainedComponentCount, 1);
+      expect(manager.retainedMeshBytes, _meshBytes(data));
+
+      manager.apply(
+        ChunkMeshData(
+          chunkIndex: data.chunkIndex,
+          revision: data.revision + 2,
           opaqueVertices: Float32List(0),
           opaqueIndices: Uint16List(0),
           translucentVertices: Float32List(0),
@@ -144,10 +173,18 @@ void main() {
       );
 
       expect(manager.loadedChunkCount, 0);
+      expect(manager.retainedComponentCount, 0);
+      expect(manager.retainedMeshBytes, 0);
       expect(renderWorld.children.whereType<MeshComponent>(), isEmpty);
     });
   });
 }
+
+int _meshBytes(ChunkMeshData data) =>
+    data.opaqueVertices.lengthInBytes +
+    data.opaqueIndices.lengthInBytes +
+    data.translucentVertices.lengthInBytes +
+    data.translucentIndices.lengthInBytes;
 
 void _expectBoundsContainPackedVertices(Aabb3 bounds, Float32List vertices) {
   for (

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math' as math;
+import 'dart:ui' show Canvas;
 
 import 'package:flame/events.dart';
 import 'package:flame_3d/camera.dart';
@@ -8,7 +9,7 @@ import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart' show KeyEventResult;
+import 'package:flutter/widgets.dart' show KeyEventResult, MediaQuery;
 import 'package:minedart_core/minedart_core.dart';
 
 import '../assets/atlas_selection.dart';
@@ -22,6 +23,8 @@ import '../input/sprint_fov.dart';
 import '../hud/hud_state.dart';
 import '../interact/block_interactor.dart';
 import '../pipeline/mesh_pipeline.dart';
+import '../pipeline/mesh_request_queue.dart';
+import '../performance/performance.dart';
 import '../render/chunk_render_manager.dart';
 import '../render/voxel_material.dart';
 import '../showcase/render/showcase_render.dart';
@@ -124,10 +127,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   /// without bumping that chunk's own revision (see cross-review P1).
   final Map<int, int> _meshGeneration = <int, int>{};
 
-  ChunkSnapshot _snapshotFor(Chunk chunk) {
-    final index = VoxelWorld.chunkIndexOf(chunk.cx, chunk.cy, chunk.cz);
-    final generation = (_meshGeneration[index] ?? 0) + 1;
-    _meshGeneration[index] = generation;
+  ChunkSnapshot _snapshotFor(Chunk chunk, int generation) {
     final raw = ChunkSnapshot.capture(voxelWorld, chunk.cx, chunk.cy, chunk.cz);
     return ChunkSnapshot.fromBuffers(
       cx: raw.cx,
@@ -145,6 +145,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   late final BlockParticlePool particlePool;
   late final RenderLabBridge renderLab;
   final FrameMetrics frameMetrics = FrameMetrics();
+  late final _performancePublisher = frameMetrics.createPublisher();
+  final Stopwatch _performanceClock = Stopwatch()..start();
   StreamSubscription<ChunkMeshData>? _meshSub;
   StreamSubscription<MouseLookEvent>? _mouseSub;
   StreamSubscription<MouseLookEvent>? _browserMouseSub;
@@ -162,6 +164,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   int _viewChunkX = -1;
   int _viewChunkZ = -1;
   final Set<int> _requestedChunks = <int>{};
+  final MeshRequestQueue _pendingMeshCaptures = MeshRequestQueue();
+  final Stopwatch _meshCaptureStopwatch = Stopwatch();
+  final Stopwatch _meshApplyStopwatch = Stopwatch();
   double _worldTickAccumulator = 0;
   static const double _worldTickStep = 0.05;
   static const int _worldTickBudget = 256;
@@ -346,7 +351,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       particlePool,
     ]);
 
-    _meshSub = pipeline.results.listen(chunks.apply);
+    _meshSub = pipeline.results.listen(_applyMeshResult);
+    pipeline.onMainThreadMeshTime =
+        frameMetrics.telemetry.accumulateMainThreadMesh;
     if (!kIsWeb) {
       _mouseSub = _mouseLook.events.listen(
         _onMouseEvent,
@@ -364,6 +371,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _mouseSub?.cancel();
     _browserMouseSub?.cancel();
     _browserPointerLock.dispose();
+    pipeline.onMainThreadMeshTime = null;
+    _pendingMeshCaptures.dispose();
     unawaited(_mouseLook.close());
     renderLab.dispose();
     hud.dispose();
@@ -396,6 +405,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     if (!force && cx == _viewChunkX && cz == _viewChunkZ) return;
     _viewChunkX = cx;
     _viewChunkZ = cz;
+    if (kIsWeb) {
+      _pendingMeshCaptures.setPriorityOrigin(x: cx, y: 0, z: cz);
+    }
     chunks.updateVisibility(
       playerX: _eyePosition.x,
       playerZ: _eyePosition.z,
@@ -431,16 +443,109 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   }
 
   void _requestChunk(Chunk chunk) {
+    final index = VoxelWorld.chunkIndexOf(chunk.cx, chunk.cy, chunk.cz);
+    final generation = (_meshGeneration[index] ?? 0) + 1;
+    _meshGeneration[index] = generation;
+    if (kIsWeb) {
+      _pendingMeshCaptures.request(
+        chunkIndex: index,
+        chunkX: chunk.cx,
+        chunkY: chunk.cy,
+        chunkZ: chunk.cz,
+        generation: generation,
+      );
+      return;
+    }
+    _submitChunkSnapshot(chunk, generation);
+  }
+
+  void _submitChunkSnapshot(Chunk chunk, int generation) {
     final dx = chunk.cx * WorldDims.chunkSize + 8.0 - _eyePosition.x;
     final dy = chunk.cy * WorldDims.chunkSize + 8.0 - _eyePosition.y;
     final dz = chunk.cz * WorldDims.chunkSize + 8.0 - _eyePosition.z;
     pipeline.request(
       MeshJob(
-        snapshot: _snapshotFor(chunk),
+        snapshot: _snapshotFor(chunk, generation),
         priority: dx * dx + dy * dy + dz * dz,
       ),
     );
   }
+
+  void _applyMeshResult(ChunkMeshData data) {
+    _meshApplyStopwatch
+      ..reset()
+      ..start();
+    try {
+      chunks.apply(data);
+    } finally {
+      _meshApplyStopwatch.stop();
+      frameMetrics.telemetry.accumulateMainThreadMesh(
+        _meshApplyStopwatch.elapsedMicroseconds / 1000,
+      );
+    }
+  }
+
+  void _drainPendingMeshCaptures() {
+    if (!kIsWeb || _pendingMeshCaptures.isEmpty) return;
+    final budget = pipeline.activity.budgetMicroseconds;
+    _meshCaptureStopwatch
+      ..reset()
+      ..start();
+    var attempted = false;
+    try {
+      while (!_pendingMeshCaptures.isEmpty &&
+          (!attempted || _meshCaptureStopwatch.elapsedMicroseconds < budget)) {
+        final request = _pendingMeshCaptures.takeNext();
+        if (request == null) break;
+        attempted = true;
+        try {
+          _submitChunkSnapshot(
+            voxelWorld.chunks[request.chunkIndex],
+            request.generation,
+          );
+        } on Object {
+          _pendingMeshCaptures.fail(request);
+          continue;
+        }
+        _pendingMeshCaptures.complete(request);
+      }
+    } finally {
+      _meshCaptureStopwatch.stop();
+      if (attempted) {
+        frameMetrics.telemetry.accumulateMainThreadMesh(
+          _meshCaptureStopwatch.elapsedMicroseconds / 1000,
+        );
+      }
+    }
+  }
+
+  int get _meshQueueCount =>
+      pipeline.pendingCount + _pendingMeshCaptures.pendingCount;
+
+  void _updateMeshActivity() {
+    final hasImmediateInput =
+        _pendingMouseDx != 0 || _pendingMouseDy != 0 || _hasInteractiveKeyInput;
+    if (hasImmediateInput) {
+      pipeline.activity = MeshPipelineActivity.interactive;
+    } else if (_playerBody.velocity.length2 > 0.01) {
+      pipeline.activity = MeshPipelineActivity.moving;
+    } else if (_meshQueueCount > 0) {
+      pipeline.activity = MeshPipelineActivity.loading;
+    } else {
+      pipeline.activity = MeshPipelineActivity.idle;
+    }
+  }
+
+  bool get _hasInteractiveKeyInput =>
+      _keys.contains(_bindings[GameControl.moveForward]) ||
+      _keys.contains(_bindings[GameControl.moveBackward]) ||
+      _keys.contains(_bindings[GameControl.strafeLeft]) ||
+      _keys.contains(_bindings[GameControl.strafeRight]) ||
+      _keys.contains(_bindings[GameControl.jump]) ||
+      _keys.contains(LogicalKeyboardKey.arrowLeft) ||
+      _keys.contains(LogicalKeyboardKey.arrowRight) ||
+      _keys.contains(LogicalKeyboardKey.arrowUp) ||
+      _keys.contains(LogicalKeyboardKey.arrowDown);
 
   /// Re-mesh the given dirty chunk indices (after a block edit).
   void remeshDirty(Set<int> dirtyChunks) {
@@ -568,36 +673,84 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   void update(double dt) {
-    _updateLook(dt);
-    if (!simulationPaused) {
-      if (_noclip) {
-        _updateNoclip(dt);
-      } else {
-        _updatePhysics(dt);
+    final telemetry = frameMetrics.telemetry;
+    telemetry.recordWallFrame(dt * 1000);
+    telemetry.startTiming(PerformanceMetric.update);
+    try {
+      _updateMeshActivity();
+      _drainPendingMeshCaptures();
+      _updateLook(dt);
+      if (!simulationPaused) {
+        if (_noclip) {
+          _updateNoclip(dt);
+        } else {
+          _updatePhysics(dt);
+        }
+        _updateWorldSimulation(dt);
       }
-      _updateWorldSimulation(dt);
+      camera.fovY = stepSprintFov(
+        current: camera.fovY,
+        sprinting: isSprinting,
+        reducedMotion: renderLab.settings.reducedMotion,
+        dt: dt,
+      );
+      _updateChunkView();
+      hud.recordFrame(
+        dt,
+        _eyePosition.x,
+        _eyePosition.y,
+        _eyePosition.z,
+        visibleChunks: chunks.visibleChunkCount,
+        loadedChunks: chunks.loadedChunkCount,
+        meshQueue: _meshQueueCount,
+        renderDistance: _renderDistanceChunks,
+        sprinting: isSprinting,
+      );
+      _updateTargetOutline();
+      super.update(dt);
+      if (telemetry.pendingMainThreadMeshMs > 0) {
+        telemetry.consumeMainThreadMesh();
+      }
+    } finally {
+      telemetry.stopAndRecordTiming(PerformanceMetric.update);
     }
-    camera.fovY = stepSprintFov(
-      current: camera.fovY,
-      sprinting: isSprinting,
-      reducedMotion: renderLab.settings.reducedMotion,
-      dt: dt,
+  }
+
+  @override
+  void render(Canvas canvas) {
+    final telemetry = frameMetrics.telemetry;
+    telemetry.startTiming(PerformanceMetric.cpuRender);
+    try {
+      super.render(canvas);
+    } finally {
+      telemetry.stopAndRecordTiming(PerformanceMetric.cpuRender);
+    }
+    if (isLoaded) _publishPerformanceSnapshot();
+  }
+
+  void _publishPerformanceSnapshot() {
+    final context = buildContext;
+    final devicePixelRatio = context == null
+        ? 0.0
+        : MediaQuery.devicePixelRatioOf(context);
+    final cache = world.context.device.lastBindCacheCounters;
+    frameMetrics.updateSnapshotFields(
+      drawCount: world.context.drawCount,
+      meshQueue: _meshQueueCount,
+      devicePixelRatio: devicePixelRatio,
+      effectiveTargetWidth: (size.x * devicePixelRatio).toInt(),
+      effectiveTargetHeight: (size.y * devicePixelRatio).toInt(),
+      retainedComponentCount: chunks.retainedComponentCount,
+      retainedMeshBytes: chunks.retainedMeshBytes,
+      uniformUploadHits: cache?.uniformUploadHits ?? 0,
+      uniformUploadMisses: cache?.uniformUploadMisses ?? 0,
+      bindGroupHits: cache?.bindGroupHits ?? 0,
+      bindGroupMisses: cache?.bindGroupMisses ?? 0,
     );
-    _updateChunkView();
-    hud.recordFrame(
-      dt,
-      _eyePosition.x,
-      _eyePosition.y,
-      _eyePosition.z,
-      visibleChunks: chunks.visibleChunkCount,
-      loadedChunks: chunks.loadedChunkCount,
-      meshQueue: pipeline.pendingCount,
-      renderDistance: _renderDistanceChunks,
-      sprinting: isSprinting,
+    final snapshot = _performancePublisher.publishIfDue(
+      elapsedMicroseconds: _performanceClock.elapsedMicroseconds,
     );
-    renderLab.recordFrame(frameTimeMs: dt * 1000);
-    _updateTargetOutline();
-    super.update(dt);
+    if (snapshot != null) hud.updatePerformanceSnapshot(snapshot);
   }
 
   void _updateTargetOutline() {

@@ -22,6 +22,8 @@ final class ChunkRenderManager {
   final Material _material;
   final Map<int, _ChunkComponents> _components = {};
   final Map<int, int> _revisions = {};
+  int _retainedComponentCount = 0;
+  int _retainedMeshBytes = 0;
   int _viewChunkX = 0;
   int _viewChunkZ = 0;
   int _renderDistanceChunks = WorldDims.worldChunksX;
@@ -29,6 +31,8 @@ final class ChunkRenderManager {
 
   int get loadedChunkCount => _components.length;
   int get visibleChunkCount => _visibleChunkCount;
+  int get retainedComponentCount => _retainedComponentCount;
+  int get retainedMeshBytes => _retainedMeshBytes;
 
   /// Applies a cheap chunk-distance gate in addition to flame_3d's frustum
   /// culling. Mesh/material instances stay retained when the preset changes.
@@ -73,6 +77,10 @@ final class ChunkRenderManager {
 
     final previous = _components[data.chunkIndex];
     if (previous?.distanceVisible ?? false) _visibleChunkCount--;
+    if (previous != null) {
+      _retainedComponentCount -= previous.componentCount;
+      _retainedMeshBytes -= previous.meshBytes;
+    }
     previous?.remove();
 
     if (data.isEmpty) {
@@ -99,8 +107,15 @@ final class ChunkRenderManager {
         position: position,
         opaquePass: false,
       ),
+      meshBytes:
+          data.opaqueVertices.lengthInBytes +
+          data.opaqueIndices.lengthInBytes +
+          data.translucentVertices.lengthInBytes +
+          data.translucentIndices.lengthInBytes,
     );
     _components[data.chunkIndex] = components;
+    _retainedComponentCount += components.componentCount;
+    _retainedMeshBytes += components.meshBytes;
     final inRange = _isInRange(data.chunkIndex);
     components.setDistanceVisible(inRange);
     if (inRange) _visibleChunkCount++;
@@ -154,10 +169,17 @@ final class ChunkRenderManager {
 }
 
 final class _ChunkComponents {
-  const _ChunkComponents({this.opaque, this.translucent});
+  const _ChunkComponents({
+    this.opaque,
+    this.translucent,
+    required this.meshBytes,
+  });
 
   final _DistanceCulledMeshComponent? opaque;
   final _DistanceCulledMeshComponent? translucent;
+  final int meshBytes;
+  int get componentCount =>
+      (opaque == null ? 0 : 1) + (translucent == null ? 0 : 1);
   bool get distanceVisible =>
       opaque?.distanceVisible ?? translucent?.distanceVisible ?? false;
 

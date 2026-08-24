@@ -15,7 +15,12 @@ import 'package:minedart_core/minedart_core.dart';
 import 'mesh_pipeline_base.dart';
 
 class MeshPipeline implements MeshPipelineBase {
-  MeshPipeline({this.workers = 3});
+  MeshPipeline({
+    this.workers = 3,
+    MeshPipelineActivity activity = MeshPipelineActivity.loading,
+  }) : // Keep the public parameter name out of the private field spelling.
+       // ignore: prefer_initializing_formals
+       _activity = activity;
 
   final int workers;
   final _idle = <SendPort>[];
@@ -23,6 +28,16 @@ class MeshPipeline implements MeshPipelineBase {
   final _queue = <int, MeshJob>{};
   final _inFlight = <int, int>{};
   final _results = StreamController<ChunkMeshData>.broadcast();
+  MeshPipelineActivity _activity;
+
+  @override
+  MeshPipelineActivity get activity => _activity;
+
+  @override
+  set activity(MeshPipelineActivity value) => _activity = value;
+
+  @override
+  MainThreadMeshTimeObserver? onMainThreadMeshTime;
 
   @override
   Stream<ChunkMeshData> get results => _results.stream;
