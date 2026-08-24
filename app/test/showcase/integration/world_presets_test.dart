@@ -33,6 +33,31 @@ void main() {
     expect(landColumns, greaterThan(0));
   });
 
+  test('islands spawn stands on a local high plateau with open headroom', () {
+    for (final seed in const <int>[0x5eed, 0, -1, 42]) {
+      final world = generatePresetWorld(seed, LaunchWorldPreset.islands);
+      final spawn = defaultWorldSpawn(world);
+      final x = spawn.x.floor();
+      final y = spawn.y.floor();
+      final z = spawn.z.floor();
+
+      expect(Blocks.id(world.blockAt(x, y - 1, z)), Blocks.grass);
+      expect(Blocks.id(world.blockAt(x, y, z)), Blocks.air);
+      expect(Blocks.id(world.blockAt(x, y + 1, z)), Blocks.air);
+      expect(spawn.pitch, 0);
+
+      for (
+        var forward = 1;
+        forward <= IslandsWorldGenerator.safeSpawnHalfExtent;
+        forward++
+      ) {
+        final aheadHeight =
+            world.skyHeight[x + (z - forward) * WorldDims.worldBlocksX];
+        expect(aheadHeight, lessThanOrEqualTo(y));
+      }
+    }
+  });
+
   test('shared ids are stable and preserve the preset', () {
     expect(
       sharedWorldId(-42, LaunchWorldPreset.flat, nonce: 35),

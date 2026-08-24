@@ -27,7 +27,6 @@ final class IslandsWorldGenerator {
   static const int seaLevel = WorldDims.seaLevel;
   static const int spawnX = WorldDims.worldBlocksX ~/ 2;
   static const int spawnZ = WorldDims.worldBlocksZ ~/ 2;
-  static const int spawnSurfaceY = seaLevel + 7;
 
   /// Half-size of the guaranteed square, flat, obstruction-free spawn area.
   static const int safeSpawnHalfExtent = 6;
@@ -93,11 +92,6 @@ final class IslandsWorldGenerator {
   void _buildHeightmap(Uint8List heights, List<_Island> islands) {
     for (var z = 0; z < WorldDims.worldBlocksZ; z++) {
       for (var x = 0; x < WorldDims.worldBlocksX; x++) {
-        if (_insideSafeSpawn(x, z)) {
-          heights[_columnIndex(x, z)] = spawnSurfaceY;
-          continue;
-        }
-
         var bestStrength = -double.infinity;
         var bestIsland = islands.first;
         for (final island in islands) {
@@ -132,6 +126,49 @@ final class IslandsWorldGenerator {
           top = (_deepOceanFloor + relief * 3.0).round().clamp(6, seaLevel - 5);
         }
         heights[_columnIndex(x, z)] = top;
+      }
+    }
+
+    // Put the player on top of the local hill, not in a fixed-height square
+    // cut into it. The old seaLevel + 7 plateau could sit about seven blocks
+    // below the surrounding central island and read as a basement with walls.
+    var plateau = 0;
+    for (
+      var z = spawnZ - _spawnFeatureBuffer;
+      z <= spawnZ + _spawnFeatureBuffer;
+      z++
+    ) {
+      for (
+        var x = spawnX - _spawnFeatureBuffer;
+        x <= spawnX + _spawnFeatureBuffer;
+        x++
+      ) {
+        plateau = math.max(plateau, heights[_columnIndex(x, z)]);
+      }
+    }
+
+    for (
+      var z = spawnZ - _spawnFeatureBuffer;
+      z <= spawnZ + _spawnFeatureBuffer;
+      z++
+    ) {
+      for (
+        var x = spawnX - _spawnFeatureBuffer;
+        x <= spawnX + _spawnFeatureBuffer;
+        x++
+      ) {
+        final distance = math.max((x - spawnX).abs(), (z - spawnZ).abs());
+        final index = _columnIndex(x, z);
+        if (distance <= safeSpawnHalfExtent) {
+          heights[index] = plateau;
+          continue;
+        }
+        final blend =
+            (distance - safeSpawnHalfExtent) /
+            (_spawnFeatureBuffer - safeSpawnHalfExtent);
+        final smoothBlend = blend * blend * (3 - 2 * blend);
+        heights[index] = (plateau + (heights[index] - plateau) * smoothBlend)
+            .round();
       }
     }
   }
@@ -343,7 +380,7 @@ final class IslandsWorldGenerator {
   ) {
     for (var z = 2; z < WorldDims.worldBlocksZ - 2; z++) {
       for (var x = 2; x < WorldDims.worldBlocksX - 2; x++) {
-        if (random.nextInt(68) != 0 || _insideSpawnBuffer(x, z)) continue;
+        if (random.nextInt(68) != 0 || _insideTreeSpawnBuffer(x, z)) continue;
         final surfaceY = heights[_columnIndex(x, z)];
         if (_rawBlock(world, x, surfaceY, z) != Blocks.grass) continue;
 
@@ -399,7 +436,7 @@ final class IslandsWorldGenerator {
   ) {
     for (var z = 0; z < WorldDims.worldBlocksZ; z++) {
       for (var x = 0; x < WorldDims.worldBlocksX; x++) {
-        if (_insideSafeSpawn(x, z)) continue;
+        if (_insideSpawnBuffer(x, z)) continue;
         final surfaceY = heights[_columnIndex(x, z)];
         if (surfaceY + 1 >= WorldDims.worldBlocksY ||
             _rawBlock(world, x, surfaceY, z) != Blocks.grass ||
@@ -429,6 +466,10 @@ final class IslandsWorldGenerator {
   static bool _insideSpawnBuffer(int x, int z) =>
       (x - spawnX).abs() <= _spawnFeatureBuffer &&
       (z - spawnZ).abs() <= _spawnFeatureBuffer;
+
+  static bool _insideTreeSpawnBuffer(int x, int z) =>
+      (x - spawnX).abs() <= _spawnFeatureBuffer + 2 &&
+      (z - spawnZ).abs() <= _spawnFeatureBuffer + 2;
 
   static int _columnIndex(int x, int z) => x + z * WorldDims.worldBlocksX;
 

@@ -13,7 +13,7 @@ void main() {
   test('same seed repeats the full block hash and another seed differs', () {
     final repeated = VoxelWorld();
     IslandsWorldGenerator(seed).generate(repeated);
-    expect(_blockHash(world), 321698412);
+    expect(_blockHash(world), 1349996066);
     expect(_blockHash(repeated), _blockHash(world));
 
     final different = VoxelWorld();
@@ -204,8 +204,15 @@ void main() {
 void _expectSafeSpawn(VoxelWorld world, {String? reason}) {
   const centerX = IslandsWorldGenerator.spawnX;
   const centerZ = IslandsWorldGenerator.spawnZ;
-  const surfaceY = IslandsWorldGenerator.spawnSurfaceY;
   const extent = IslandsWorldGenerator.safeSpawnHalfExtent;
+  final surfaceY =
+      world.skyHeight[centerX + centerZ * WorldDims.worldBlocksX] - 1;
+
+  expect(
+    surfaceY,
+    greaterThanOrEqualTo(IslandsWorldGenerator.seaLevel + 7),
+    reason: reason,
+  );
 
   for (var z = centerZ - extent; z <= centerZ + extent; z++) {
     for (var x = centerX - extent; x <= centerX + extent; x++) {
@@ -219,6 +226,15 @@ void _expectSafeSpawn(VoxelWorld world, {String? reason}) {
       for (var y = surfaceY + 1; y <= surfaceY + 3; y++) {
         expect(world.blockAt(x, y, z), Blocks.air, reason: reason);
       }
+    }
+  }
+
+  // The guaranteed square is the local high point. Looking outward from its
+  // center can descend, but cannot immediately face an excavated wall.
+  for (var z = centerZ - extent - 4; z <= centerZ + extent + 4; z++) {
+    for (var x = centerX - extent - 4; x <= centerX + extent + 4; x++) {
+      final (nearbySurface, _) = _terrainSurface(world, x, z);
+      expect(nearbySurface, lessThanOrEqualTo(surfaceY), reason: reason);
     }
   }
 }

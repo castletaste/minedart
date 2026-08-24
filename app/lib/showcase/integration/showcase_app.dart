@@ -791,7 +791,7 @@ WorldSpawn defaultWorldSpawn(VoxelWorld world) {
       }
     }
   }
-  return WorldSpawn(x: bestX + 0.5, y: bestY + 1.0, z: bestZ + 0.5);
+  return WorldSpawn(x: bestX + 0.5, y: bestY.toDouble(), z: bestZ + 0.5);
 }
 
 int _distanceForFog(renderer.FogPreset fog) => switch (fog) {
