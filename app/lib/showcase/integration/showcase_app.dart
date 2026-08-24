@@ -127,6 +127,15 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     _inputCapture.update(captured);
   }
 
+  Future<void> _acquireModalInput() async {
+    _inputCapture.update(true);
+    await _runtime.game.awaitUiInputRelease();
+  }
+
+  void _releaseModalInput() {
+    _inputCapture.update(false);
+  }
+
   MinimapViewState _createMinimapState({renderer.MinimapSnapshot? snapshot}) {
     final game = _runtime.game;
     return MinimapViewState(
@@ -208,12 +217,15 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     if (_modalOpen || !mounted || modalContext == null) return;
     _modalOpen = true;
     try {
+      await _acquireModalInput();
+      if (!mounted || !modalContext.mounted) return;
       await showBuilderStudio(
         modalContext,
         controller: _builder,
         onInputCaptureChanged: _onModalInputCaptureChanged,
       );
     } finally {
+      _releaseModalInput();
       _modalOpen = false;
     }
   }
@@ -224,9 +236,12 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     _modalOpen = true;
     _runtime.game.simulationPaused = true;
     try {
+      await _acquireModalInput();
+      if (!mounted || !modalContext.mounted) return;
       await showDialog<void>(
         context: modalContext,
         barrierDismissible: false,
+        requestFocus: true,
         builder: (dialogContext) => Dialog.fullscreen(
           backgroundColor: Colors.transparent,
           child: PauseOptionsView(
@@ -245,6 +260,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
         ),
       );
     } finally {
+      _releaseModalInput();
       _modalOpen = false;
       _runtime.game.simulationPaused = false;
     }
@@ -279,8 +295,11 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     if (_modalOpen || !mounted || modalContext == null) return;
     _modalOpen = true;
     try {
+      await _acquireModalInput();
+      if (!mounted || !modalContext.mounted) return;
       await showDialog<void>(
         context: modalContext,
+        requestFocus: true,
         builder: (dialogContext) => ModalInputRegion(
           onInputCaptureChanged: _onModalInputCaptureChanged,
           child: Dialog(
@@ -306,6 +325,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
         ),
       );
     } finally {
+      _releaseModalInput();
       _modalOpen = false;
     }
   }
@@ -314,12 +334,15 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     if (_modalOpen || !mounted || _navigatorContext == null) return;
     _modalOpen = true;
     try {
+      await _acquireModalInput();
+      if (!mounted) return;
       await _refreshWorlds();
       final modalContext = _navigatorContext;
       if (modalContext == null || !modalContext.mounted) return;
       await showDialog<void>(
         context: modalContext,
         barrierDismissible: false,
+        requestFocus: true,
         builder: (dialogContext) => Dialog.fullscreen(
           child: WorldLibraryView(
             controller: _worldLibrary,
@@ -330,6 +353,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
         ),
       );
     } finally {
+      _releaseModalInput();
       _modalOpen = false;
     }
   }

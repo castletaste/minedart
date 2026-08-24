@@ -86,6 +86,7 @@ Future<void> showBuilderStudio(
   barrierDismissible: true,
   barrierLabel: 'Close Block inventory',
   barrierColor: Colors.black54,
+  requestFocus: true,
   transitionDuration: const Duration(milliseconds: 140),
   pageBuilder: (dialogContext, _, _) => BuilderStudioView(
     controller: controller,

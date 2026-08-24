@@ -245,6 +245,13 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     if (captured) unawaited(_releaseMouse());
   }
 
+  /// Waits until the platform cursor is released before a modal route opens.
+  ///
+  /// [setUiInputCaptured] remains synchronous for widget lifecycle callbacks;
+  /// modal integration uses this barrier to prevent a pending native capture
+  /// from surviving into the first interactive modal frame.
+  Future<void> awaitUiInputRelease() => _releaseMouse();
+
   /// Left click: break the block under the crosshair.
   void breakTargetBlock() {
     if (!interactionEnabled) return;
