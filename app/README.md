@@ -19,7 +19,7 @@ Main controls:
 
 - WASD + Space: move and jump; double-tap and hold W to sprint.
 - Mouse: look; left click breaks, right click places.
-- 1–9 / wheel: hotbar; B: Builder Studio.
+- 1–9 / wheel: hotbar.
 - F: fog/render-distance preset; F3: metrics and frame-time graph.
 - E: compact block inventory; Enter: Save Teleport; R: Teleport; N: noclip.
 - Blocks are broken with LMB and placed with RMB; Q has no action.
