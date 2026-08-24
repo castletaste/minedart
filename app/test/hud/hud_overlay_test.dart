@@ -178,6 +178,17 @@ void main() {
           find.descendant(of: numberFinder, matching: find.byType(Text)),
           findsNothing,
         );
+        expect(
+          find.descendant(of: numberFinder, matching: find.byType(CustomPaint)),
+          findsNothing,
+        );
+        expect(
+          find.descendant(
+            of: find.byKey(HotbarKeys.slot(index)),
+            matching: find.byType(CustomPaint),
+          ),
+          findsOneWidget,
+        );
       }
     }
   });

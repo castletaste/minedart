@@ -122,27 +122,24 @@ class _HotbarSlot extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: <Widget>[
-                  Container(
+                  SizedBox(
                     width: Hotbar.slotSize,
                     height: Hotbar.slotSize - 12,
-                    decoration: BoxDecoration(
-                      color: blockColor(blockId),
-                      border: Border.all(
-                        color: active
-                            ? const Color(0xFFFFFFFF)
-                            : const Color(0x55FFFFFF),
-                        width: active ? 3 : 1,
+                    child: CustomPaint(
+                      painter: _HotbarSwatchPainter(
+                        color: blockColor(blockId),
+                        active: active,
+                        number: index + 1,
                       ),
-                    ),
-                    alignment: Alignment.topLeft,
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 2, top: 1),
-                      child: SizedBox(
-                        key: HotbarKeys.number(index),
-                        width: 9,
-                        height: 11,
-                        child: CustomPaint(
-                          painter: _HotbarNumberPainter(index + 1),
+                      child: Align(
+                        alignment: Alignment.topLeft,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 2, top: 1),
+                          child: SizedBox(
+                            key: HotbarKeys.number(index),
+                            width: 9,
+                            height: 11,
+                          ),
                         ),
                       ),
                     ),
@@ -171,14 +168,20 @@ class _HotbarSlot extends StatelessWidget {
   }
 }
 
-/// Paints slot numbers as pixels instead of glyphs. On macOS Impeller, text
-/// glyph layers can remain at their pre-fullscreen transform while the rest of
-/// a scaled hotbar moves. Keeping the number in the slot's canvas avoids that
-/// independent raster-cache layer.
-final class _HotbarNumberPainter extends CustomPainter {
-  const _HotbarNumberPainter(this.value);
+/// Paints the swatch, border, and pixel number into one retained slot canvas.
+///
+/// Keeping the number out of a nested paint layer prevents macOS Impeller from
+/// retaining its pre-fullscreen transform independently from the slot.
+final class _HotbarSwatchPainter extends CustomPainter {
+  const _HotbarSwatchPainter({
+    required this.color,
+    required this.active,
+    required this.number,
+  });
 
-  final int value;
+  final Color color;
+  final bool active;
+  final int number;
 
   static const List<List<int>> _rows = <List<int>>[
     <int>[0, 0, 0, 0, 0],
@@ -195,21 +198,47 @@ final class _HotbarNumberPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..isAntiAlias = false
+        ..color = color,
+    );
+    final borderWidth = active ? 3.0 : 1.0;
+    canvas.drawRect(
+      Rect.fromLTWH(
+        borderWidth / 2,
+        borderWidth / 2,
+        size.width - borderWidth,
+        size.height - borderWidth,
+      ),
+      Paint()
+        ..isAntiAlias = false
+        ..color = active ? const Color(0xFFFFFFFF) : const Color(0x55FFFFFF)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = borderWidth,
+    );
+
+    const numberOrigin = Offset(2, 1);
+    const numberSize = Size(9, 11);
     final background = Paint()
       ..isAntiAlias = false
       ..color = const Color(0x99000000);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(2)),
+      RRect.fromRectAndRadius(
+        numberOrigin & numberSize,
+        const Radius.circular(2),
+      ),
       background,
     );
 
     final pixels = Paint()
       ..isAntiAlias = false
       ..color = const Color(0xFFFFFFFF);
-    final rows = _rows[value.clamp(1, 9)];
+    final rows = _rows[number.clamp(1, 9)];
     const pixel = 1.5;
-    const left = 2.25;
-    const top = 1.75;
+    const left = 4.25;
+    const top = 2.75;
     for (var row = 0; row < rows.length; row++) {
       final mask = rows[row];
       for (var column = 0; column < 3; column++) {
@@ -223,6 +252,8 @@ final class _HotbarNumberPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_HotbarNumberPainter oldDelegate) =>
-      oldDelegate.value != value;
+  bool shouldRepaint(_HotbarSwatchPainter oldDelegate) =>
+      oldDelegate.color != color ||
+      oldDelegate.active != active ||
+      oldDelegate.number != number;
 }
