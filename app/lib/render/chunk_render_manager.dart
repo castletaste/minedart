@@ -120,6 +120,7 @@ final class ChunkRenderManager {
           vertices: vertices,
           indices: indices,
           material: _material,
+          aabb: _newChunkLocalAabb(),
         ),
       );
     return _DistanceCulledMeshComponent(
@@ -140,6 +141,15 @@ final class ChunkRenderManager {
     final cz = (chunkIndex ~/ WorldDims.worldChunksX) % WorldDims.worldChunksZ;
     final cy = chunkIndex ~/ (WorldDims.worldChunksX * WorldDims.worldChunksZ);
     return (cx, cy, cz);
+  }
+
+  /// ChunkMesher writes local block coordinates: cube and crossed-quad
+  /// corners stay in 0..chunkSize, while lowered fluid tops only shrink that
+  /// range. This is the tightest content-independent bound shared by both
+  /// passes and avoids scanning/copying packed positions during every remesh.
+  static Aabb3 _newChunkLocalAabb() {
+    final extent = WorldDims.chunkSize.toDouble();
+    return Aabb3.minMax(Vector3.zero(), Vector3.all(extent));
   }
 }
 
