@@ -33,6 +33,7 @@ final class ChunkRenderManager {
   int get visibleChunkCount => _visibleChunkCount;
   int get retainedComponentCount => _retainedComponentCount;
   int get retainedMeshBytes => _retainedMeshBytes;
+  bool isChunkInView(int chunkIndex) => _isInRange(chunkIndex);
 
   /// Applies a cheap chunk-distance gate in addition to flame_3d's frustum
   /// culling. Mesh/material instances stay retained when the preset changes.
@@ -69,6 +70,7 @@ final class ChunkRenderManager {
 
   /// Installs the latest mesh for a chunk. Empty passes have no component.
   void apply(ChunkMeshData data) {
+    if (!_isInRange(data.chunkIndex)) return;
     final previousRevision = _revisions[data.chunkIndex];
     if (previousRevision != null && data.revision < previousRevision) {
       return;
@@ -120,6 +122,26 @@ final class ChunkRenderManager {
     components.setDistanceVisible(inRange);
     if (inRange) _visibleChunkCount++;
     components.addTo(_world);
+  }
+
+  /// Releases retained CPU/GPU mesh lifetimes outside the active chunk view.
+  ///
+  /// Callers remove the returned indices from their requested set so revisiting
+  /// an evicted area schedules a fresh mesh from the authoritative voxel world.
+  int evictOutsideView({void Function(int chunkIndex)? onEvicted}) {
+    var evicted = 0;
+    _components.removeWhere((chunkIndex, components) {
+      if (_isInRange(chunkIndex)) return false;
+      if (components.distanceVisible) _visibleChunkCount--;
+      _retainedComponentCount -= components.componentCount;
+      _retainedMeshBytes -= components.meshBytes;
+      _revisions.remove(chunkIndex);
+      components.remove();
+      onEvicted?.call(chunkIndex);
+      evicted++;
+      return true;
+    });
+    return evicted;
   }
 
   _DistanceCulledMeshComponent? _componentFor({

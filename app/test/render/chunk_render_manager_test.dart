@@ -177,6 +177,60 @@ void main() {
       expect(manager.retainedMeshBytes, 0);
       expect(renderWorld.children.whereType<MeshComponent>(), isEmpty);
     });
+
+    test('evicts far retained meshes and accepts a fresh mesh on return', () {
+      const farChunk = 10;
+      final voxelWorld = VoxelWorld()
+        ..setBlock(0, 0, 0, Blocks.stone)
+        ..setBlock(
+          farChunk * WorldDims.chunkSize,
+          0,
+          farChunk * WorldDims.chunkSize,
+          Blocks.stone,
+        );
+      final nearData = const ChunkMesher().mesh(
+        ChunkSnapshot.capture(voxelWorld, 0, 0, 0),
+      );
+      final farData = const ChunkMesher().mesh(
+        ChunkSnapshot.capture(voxelWorld, farChunk, 0, farChunk),
+      );
+      final renderWorld = World3D();
+      final manager =
+          ChunkRenderManager(
+              world: renderWorld,
+              material: Material.defaultMaterial,
+            )
+            ..apply(nearData)
+            ..apply(farData);
+
+      expect(manager.loadedChunkCount, 2);
+      expect(manager.retainedComponentCount, 2);
+      final evicted = <int>[];
+      manager.updateVisibility(playerX: 0, playerZ: 0, renderDistanceChunks: 2);
+      expect(manager.evictOutsideView(onEvicted: evicted.add), 1);
+      expect(evicted, <int>[farData.chunkIndex]);
+      expect(manager.loadedChunkCount, 1);
+      expect(manager.retainedComponentCount, 1);
+      expect(manager.retainedMeshBytes, _meshBytes(nearData));
+
+      manager.apply(_copyWithRevision(farData, farData.revision + 1));
+      expect(manager.loadedChunkCount, 1);
+
+      manager.updateVisibility(
+        playerX: farChunk * WorldDims.chunkSize.toDouble(),
+        playerZ: farChunk * WorldDims.chunkSize.toDouble(),
+        renderDistanceChunks: 2,
+      );
+      expect(manager.evictOutsideView(onEvicted: evicted.add), 1);
+      expect(evicted.last, nearData.chunkIndex);
+      expect(manager.loadedChunkCount, 0);
+
+      final refreshed = _copyWithRevision(farData, farData.revision + 2);
+      manager.apply(refreshed);
+      expect(manager.loadedChunkCount, 1);
+      expect(manager.retainedComponentCount, 1);
+      expect(manager.retainedMeshBytes, _meshBytes(refreshed));
+    });
   });
 }
 
@@ -185,6 +239,16 @@ int _meshBytes(ChunkMeshData data) =>
     data.opaqueIndices.lengthInBytes +
     data.translucentVertices.lengthInBytes +
     data.translucentIndices.lengthInBytes;
+
+ChunkMeshData _copyWithRevision(ChunkMeshData data, int revision) =>
+    ChunkMeshData(
+      chunkIndex: data.chunkIndex,
+      revision: revision,
+      opaqueVertices: data.opaqueVertices,
+      opaqueIndices: data.opaqueIndices,
+      translucentVertices: data.translucentVertices,
+      translucentIndices: data.translucentIndices,
+    );
 
 void _expectBoundsContainPackedVertices(Aabb3 bounds, Float32List vertices) {
   for (

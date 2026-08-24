@@ -425,6 +425,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       playerZ: _eyePosition.z,
       renderDistanceChunks: _renderDistanceChunks,
     );
+    chunks.evictOutsideView(onEvicted: _forgetRequestedChunk);
 
     final minX = (cx - _renderDistanceChunks).clamp(
       0,
@@ -484,6 +485,10 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   }
 
   void _applyMeshResult(ChunkMeshData data) {
+    if (!chunks.isChunkInView(data.chunkIndex)) {
+      _requestedChunks.remove(data.chunkIndex);
+      return;
+    }
     _meshApplyStopwatch
       ..reset()
       ..start();
@@ -510,6 +515,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         final request = _pendingMeshCaptures.takeNext();
         if (request == null) break;
         attempted = true;
+        if (!_isChunkInView(request.chunkX, request.chunkZ)) {
+          _pendingMeshCaptures.complete(request);
+          _requestedChunks.remove(request.chunkIndex);
+          continue;
+        }
         try {
           _submitChunkSnapshot(
             voxelWorld.chunks[request.chunkIndex],
@@ -533,6 +543,14 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   int get _meshQueueCount =>
       pipeline.pendingCount + _pendingMeshCaptures.pendingCount;
+
+  bool _isChunkInView(int chunkX, int chunkZ) =>
+      (chunkX - _viewChunkX).abs() <= _renderDistanceChunks &&
+      (chunkZ - _viewChunkZ).abs() <= _renderDistanceChunks;
+
+  void _forgetRequestedChunk(int chunkIndex) {
+    _requestedChunks.remove(chunkIndex);
+  }
 
   void _updateMeshActivity() {
     final hasImmediateInput =
