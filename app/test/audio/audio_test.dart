@@ -36,6 +36,22 @@ void main() {
           if (samplePeak > peak) peak = samplePeak;
         }
         expect(peak, lessThan(32767));
+        if (_usesSoftenedMaterialTransient(assetPath)) {
+          expect(peak / 32767, lessThanOrEqualTo(0.5));
+          final quarterPeak = peak * 0.25;
+          var onsetSamples = 0;
+          for (var offset = 44; offset < bytes.length; offset += 2) {
+            if (view.getInt16(offset, Endian.little).abs() >= quarterPeak) {
+              onsetSamples = (offset - 44) ~/ 2;
+              break;
+            }
+          }
+          expect(
+            onsetSamples,
+            greaterThanOrEqualTo((44100 * 0.0015).round()),
+            reason: '$assetPath must not begin with a click-like transient',
+          );
+        }
       });
     }
   });
@@ -56,7 +72,7 @@ void main() {
       );
       expect(
         AudioCue.forBlock(Blocks.sand, BlockAudioAction.placeBlock),
-        AudioCue.gravelPlace,
+        AudioCue.sandPlace,
       );
       expect(
         AudioCue.forBlock(Blocks.logOak, BlockAudioAction.breakBlock),
@@ -99,6 +115,14 @@ void main() {
         AudioCue.stoneStep,
       );
       expect(
+        AudioCue.forBlock(Blocks.stone, BlockAudioAction.breakBlock),
+        AudioCue.stoneBreak,
+      );
+      expect(
+        AudioCue.forBlock(Blocks.stone, BlockAudioAction.placeBlock),
+        AudioCue.stonePlace,
+      );
+      expect(
         AudioCue.forBlock(Blocks.leavesOak, BlockAudioAction.step),
         AudioCue.leavesStep,
       );
@@ -112,17 +136,11 @@ void main() {
         AudioCue.leavesBreak.assetPaths,
         isNot(AudioCue.grassBreak.assetPaths),
       );
-      expect(
-        AudioCue.dirtBreak.maxPitch - AudioCue.dirtBreak.minPitch,
-        closeTo(0.03, 0.000001),
-      );
-      expect(
-        AudioCue.leavesBreak.maxPitch - AudioCue.leavesBreak.minPitch,
-        closeTo(0.03, 0.000001),
-      );
-      expect(AudioCue.stoneBreak.maxPitch, lessThanOrEqualTo(1.02));
       expect(AudioCue.stoneBreak.baseVolume, lessThan(0.7));
-      expect(AudioCue.metalBreak.maxPitch, lessThanOrEqualTo(1.02));
+      expect(
+        AudioCue.stoneHighBreak.assetPaths,
+        isNot(AudioCue.stoneBreak.assetPaths),
+      );
     });
 
     test('Classic actions share one sample bank per material', () {
@@ -139,6 +157,7 @@ void main() {
         [AudioCue.woodBreak, AudioCue.woodPlace, AudioCue.woodStep],
         [AudioCue.gravelBreak, AudioCue.gravelPlace, AudioCue.gravelStep],
         [AudioCue.metalBreak, AudioCue.metalPlace, AudioCue.metalStep],
+        [AudioCue.sandBreak, AudioCue.sandPlace, AudioCue.sandStep],
       ];
       for (final group in cueGroups) {
         expect(group[1].assetPaths, group[0].assetPaths);
@@ -153,32 +172,23 @@ void main() {
       );
     });
 
-    test('variation is deterministic and stays in cue bounds', () {
+    test('sample and volume variation is deterministic and bounded', () {
       final first = audioVariation(AudioCue.gravelBreak, 42);
       final second = audioVariation(AudioCue.gravelBreak, 42);
       expect(first, second);
       expect(first.variantIndex, inInclusiveRange(0, 3));
       expect(first.volume, inInclusiveRange(0.96, 1.0));
-      expect(
-        first.pitch,
-        inInclusiveRange(
-          AudioCue.gravelBreak.minPitch,
-          AudioCue.gravelBreak.maxPitch,
-        ),
-      );
       expect(audioVariation(AudioCue.gravelBreak, 43), isNot(first));
     });
 
-    test('legacy cue slots preserve existing dirt and sand variation', () {
+    test('legacy cue slot preserves deterministic cue indices', () {
       expect(AudioCue.gravelBreak.index, 8);
       expect(AudioCue.dirtBreak.index, 15);
     });
 
-    test('volume and pitch clamping are bounded', () {
+    test('volume clamping is bounded', () {
       expect(clampAudioVolume(-1), 0);
       expect(clampAudioVolume(2), 1);
-      expect(clampAudioPitch(0), 0.5);
-      expect(clampAudioPitch(4), 2);
     });
   });
 
@@ -195,15 +205,6 @@ void main() {
         expect(backend.calls.single.cue, AudioCue.uiClick);
         expect(backend.calls.single.variantIndex, 0);
         expect(backend.calls.single.volume, lessThanOrEqualTo(0.75));
-        expect(
-          backend.calls.single.pitch,
-          greaterThanOrEqualTo(AudioCue.uiClick.minPitch),
-        );
-        expect(
-          backend.calls.single.pitch,
-          lessThanOrEqualTo(AudioCue.uiClick.maxPitch),
-        );
-
         await service.setSfxVolume(-2);
         await service.play(AudioCue.uiClick, seed: 8);
         expect(backend.calls, hasLength(1));
@@ -237,13 +238,21 @@ void main() {
 String _text(Uint8List bytes, int offset, int length) =>
     String.fromCharCodes(bytes.sublist(offset, offset + length));
 
+bool _usesSoftenedMaterialTransient(String assetPath) =>
+    assetPath.startsWith('audio/dirt_') ||
+    assetPath.startsWith('audio/grass_') ||
+    assetPath.startsWith('audio/gravel_') ||
+    assetPath.startsWith('audio/leaves_') ||
+    assetPath.startsWith('audio/sand_') ||
+    assetPath.startsWith('audio/stone_') ||
+    assetPath.startsWith('audio/wood_');
+
 final class _Call {
-  const _Call(this.cue, this.variantIndex, this.volume, this.pitch);
+  const _Call(this.cue, this.variantIndex, this.volume);
 
   final AudioCue cue;
   final int variantIndex;
   final double volume;
-  final double pitch;
 }
 
 final class _RecordingBackend implements AudioPoolBackend {
@@ -255,9 +264,8 @@ final class _RecordingBackend implements AudioPoolBackend {
     required AudioCue cue,
     required int variantIndex,
     required double volume,
-    required double pitch,
   }) async {
-    calls.add(_Call(cue, variantIndex, volume, pitch));
+    calls.add(_Call(cue, variantIndex, volume));
   }
 
   @override

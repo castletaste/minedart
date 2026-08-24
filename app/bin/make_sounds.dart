@@ -11,6 +11,8 @@ const _materials = <String>[
   'dirt',
   'leaves',
   'metal',
+  'glass',
+  'sand',
 ];
 const _variantCount = 4;
 const _auxiliary = <String>['water', 'tnt_fuse', 'explosion', 'ui_click'];
@@ -61,14 +63,89 @@ void main() {
 }
 
 List<double> _synthMaterial(String material, int materialIndex, int variant) {
+  if (material == 'gravel') {
+    return _sourceBackedVariant(
+      path: 'tool/audio_sources/tinyworlds/gravel_source.wav',
+      variant: variant,
+      startSeconds: 0.018,
+      sourceDuration: 0.250,
+      fadeInSeconds: 0.004,
+      fadeOutSeconds: 0.018,
+      targetPeak: 0.40,
+    );
+  }
+  if (material == 'stone') {
+    return _sourceBackedVariant(
+      path: 'tool/audio_sources/tinyworlds/stone_source.wav',
+      variant: variant,
+      startSeconds: 0,
+      sourceDuration: 0.175,
+      fadeInSeconds: 0.008,
+      fadeOutSeconds: 0.018,
+      lowPassHz: 1300,
+      rateScale: 0.90,
+      targetPeak: 0.42,
+    );
+  }
+  if (material == 'wood') {
+    const paths = <String>[
+      'tool/audio_sources/tinyworlds/wood01_source.wav',
+      'tool/audio_sources/tinyworlds/wood02_source.wav',
+      'tool/audio_sources/tinyworlds/wood03_source.wav',
+      'tool/audio_sources/tinyworlds/wood03_source.wav',
+    ];
+    const starts = <double>[0, 0.035, 0.023, 0.023];
+    const durations = <double>[0.180, 0.150, 0.210, 0.210];
+    return _sourceBackedVariant(
+      path: paths[variant % paths.length],
+      variant: variant,
+      startSeconds: starts[variant % starts.length],
+      sourceDuration: durations[variant % durations.length],
+      fadeInSeconds: 0.008,
+      fadeOutSeconds: 0.018,
+      targetPeak: 0.42,
+    );
+  }
+  if (material == 'leaves') {
+    const paths = <String>[
+      'tool/audio_sources/tinyworlds/leaves01_source.wav',
+      'tool/audio_sources/tinyworlds/leaves02_source.wav',
+      'tool/audio_sources/tinyworlds/leaves01_source.wav',
+      'tool/audio_sources/tinyworlds/leaves02_source.wav',
+    ];
+    const durations = <double>[0.275, 0.205, 0.275, 0.205];
+    return _sourceBackedVariant(
+      path: paths[variant % paths.length],
+      variant: variant,
+      startSeconds: 0,
+      sourceDuration: durations[variant % durations.length],
+      fadeInSeconds: 0.008,
+      fadeOutSeconds: 0.020,
+      targetPeak: 0.40,
+    );
+  }
+  if (material == 'dirt') {
+    return _sourceBackedVariant(
+      path: 'tool/audio_sources/tinyworlds/mud02_source.wav',
+      variant: variant,
+      startSeconds: 0,
+      sourceDuration: 0.120,
+      fadeInSeconds: 0.004,
+      fadeOutSeconds: 0.016,
+      targetPeak: 0.40,
+    );
+  }
+
   final duration = switch (material) {
-    'grass' => 0.145 + variant * 0.006,
-    'dirt' => 0.138 + variant * 0.006,
+    'grass' => 0.175 + variant * 0.006,
+    'dirt' => 0.158 + variant * 0.006,
     'leaves' => 0.155 + variant * 0.007,
-    'gravel' => 0.115 + variant * 0.005,
-    'stone' => 0.112 + variant * 0.004,
+    'gravel' => 0.155 + variant * 0.005,
+    'stone' => 0.150 + variant * 0.004,
     'wood' => 0.158 + variant * 0.006,
     'metal' => 0.126 + variant * 0.004,
+    'glass' => 0.090 + variant * 0.003,
+    'sand' => 0.165 + variant * 0.006,
     _ => throw ArgumentError.value(material, 'material'),
   };
   final count = (duration * sampleRate).round();
@@ -79,16 +156,32 @@ List<double> _synthMaterial(String material, int materialIndex, int variant) {
   var grain = 0.0;
   var rustle = 0.0;
   final softMaterial = switch (material) {
-    'grass' || 'dirt' || 'leaves' || 'wood' => true,
+    'grass' || 'dirt' || 'leaves' || 'wood' || 'sand' => true,
     _ => false,
+  };
+  final lowResponse = switch (material) {
+    'grass' => 0.050,
+    'dirt' => 0.070,
+    'sand' => 0.070,
+    'gravel' => 0.055,
+    'stone' => 0.050,
+    _ => softMaterial ? 0.12 : 0.16,
+  };
+  final slowResponse = switch (material) {
+    'grass' => 0.010,
+    'dirt' => 0.014,
+    'sand' => 0.012,
+    'gravel' => 0.010,
+    'stone' => 0.009,
+    _ => softMaterial ? 0.028 : 0.035,
   };
 
   for (var i = 0; i < count; i++) {
     final t = i / sampleRate;
     final p = i / count;
     final raw = random.next() * 2 - 1;
-    low += (raw - low) * (softMaterial ? 0.12 : 0.16);
-    slow += (raw - slow) * (softMaterial ? 0.028 : 0.035);
+    low += (raw - low) * lowResponse;
+    slow += (raw - slow) * slowResponse;
     final high = raw - low;
     final mid = low - slow;
     if (random.next() >
@@ -100,30 +193,48 @@ List<double> _synthMaterial(String material, int materialIndex, int variant) {
 
     final sound = switch (material) {
       'grass' =>
-        high * 0.07 +
-            mid * 0.30 +
-            slow * 0.16 +
-            math.sin(2 * math.pi * (610 + variant * 19) * t) * 0.025,
+        slow * 0.34 +
+            low * 0.12 +
+            mid * 0.38 +
+            high * 0.0015 +
+            (rustle - low) * 0.015 +
+            grain * mid * 0.05,
       'dirt' =>
-        low * 0.23 +
-            mid * 0.34 +
-            high * 0.035 +
-            _ring(t, 155 + variant * 11, 31, 0.12) +
-            _ring(t, 238 + variant * 13, 38, 0.07) +
-            grain * 0.055,
+        slow * 0.34 +
+            low * 0.32 +
+            mid * 0.13 +
+            high * 0.0015 +
+            _ring(t, 92 + variant * 7, 46, 0.07) +
+            _ring(t, 137 + variant * 9, 58, 0.035) +
+            grain * mid * 0.05,
       'leaves' =>
         high * 0.10 +
             mid * 0.18 +
             (rustle - slow) * 0.28 +
             math.sin(2 * math.pi * (840 + variant * 23) * t) * 0.018 +
             grain * 0.07,
-      'gravel' => high * 0.24 + mid * 0.23 + grain * (0.23 + high.abs() * 0.16),
+      'gravel' =>
+        (slow * 0.16 +
+                low * 0.28 +
+                mid * 0.25 +
+                high * 0.004 +
+                grain * mid * 0.10) *
+            (0.30 +
+                _burst(t, 0.012 + variant * 0.001, 0.007) +
+                _burst(t, 0.050 + variant * 0.003, 0.010) * 0.82 +
+                _burst(t, 0.096 - variant * 0.002, 0.013) * 0.62),
       'stone' =>
-        low * 0.16 +
-            mid * 0.38 +
-            high * (0.055 + grain * 0.12) +
-            _ring(t, 128 + variant * 9, 42, 0.20) +
-            _ring(t, 214 + variant * 13, 62, 0.10),
+        (slow * 0.14 +
+                    low * 0.28 +
+                    mid * 0.30 +
+                    high * 0.003 +
+                    grain * mid * 0.07) *
+                (0.24 +
+                    _burst(t, 0.007 + variant * 0.001, 0.005) * 1.08 +
+                    _burst(t, 0.043 + variant * 0.002, 0.008) * 0.74 +
+                    _burst(t, 0.091 - variant * 0.002, 0.012) * 0.50) +
+            _ring(t, 315 + variant * 23, 145, 0.012) +
+            _ring(t, 510 + variant * 29, 180, 0.005),
       'wood' =>
         high * 0.035 +
             mid * 0.10 +
@@ -136,6 +247,18 @@ List<double> _synthMaterial(String material, int materialIndex, int variant) {
             high * (0.045 + grain * 0.08) +
             _ring(t, 176 + variant * 11, 38, 0.22) +
             _ring(t, 302 + variant * 17, 58, 0.09),
+      'glass' =>
+        mid * 0.12 +
+            high * 0.18 +
+            grain * high * 0.16 +
+            _ring(t, 1320 + variant * 47, 138, 0.075) +
+            _ring(t, 2110 + variant * 61, 184, 0.035),
+      'sand' =>
+        slow * 0.30 +
+            low * 0.32 +
+            mid * 0.24 +
+            high * 0.006 +
+            grain * mid * 0.08,
       _ => 0,
     };
     final flutter = switch (material) {
@@ -146,26 +269,131 @@ List<double> _synthMaterial(String material, int materialIndex, int variant) {
       _ => 1.0,
     };
     final envelope = switch (material) {
-      'grass' || 'dirt' || 'leaves' || 'wood' => _softEnvelope(p),
-      'stone' || 'metal' => _stoneEnvelope(p),
+      'grass' => _timedEnvelope(t, p, 0.015, 2.45),
+      'dirt' => _timedEnvelope(t, p, 0.014, 2.55),
+      'sand' => _timedEnvelope(t, p, 0.012, 2.35),
+      'gravel' => _timedEnvelope(t, p, 0.008, 2.25),
+      'stone' => _timedEnvelope(t, p, 0.005, 2.85),
+      'glass' => _timedEnvelope(t, p, 0.002, 3.40),
+      'leaves' || 'wood' => _softEnvelope(p),
+      'metal' => _stoneEnvelope(p),
       _ => _shortEnvelope(p),
     };
     samples[i] = sound * flutter * envelope;
   }
   final targetPeak = switch (material) {
-    'grass' => 0.48,
-    'dirt' => 0.50,
+    'grass' => 0.32,
+    'dirt' => 0.38,
     'leaves' => 0.46,
     'wood' => 0.52,
-    'stone' => 0.56,
+    'sand' => 0.38,
+    'gravel' => 0.38,
+    'stone' => 0.40,
     'metal' => 0.54,
+    'glass' => 0.44,
     _ => 0.68,
   };
   return _normalize(samples, targetPeak);
 }
 
+List<double> _sourceBackedVariant({
+  required String path,
+  required int variant,
+  required double startSeconds,
+  required double sourceDuration,
+  required double fadeInSeconds,
+  required double fadeOutSeconds,
+  double? lowPassHz,
+  double rateScale = 1,
+  required double targetPeak,
+}) {
+  const playbackRates = <double>[0.975, 0.992, 1.008, 1.025];
+  const startOffsets = <double>[0, 0.0015, 0.003, 0.0005];
+  final source = _readMonoPcm16Wav(path);
+  final baseRate = playbackRates[variant % playbackRates.length];
+  final rate = rateScale == 1 ? baseRate : baseRate * rateScale;
+  final sourceStart =
+      ((startSeconds + startOffsets[variant % startOffsets.length]) *
+              sampleRate)
+          .round();
+  final available = math.max(0, source.length - sourceStart);
+  final sourceCount = math.min(
+    available,
+    (sourceDuration * sampleRate).round(),
+  );
+  final outputCount = (sourceCount / rate).floor();
+  final output = List<double>.filled(outputCount, 0);
+  final fadeInSamples = math.max(1, (fadeInSeconds * sampleRate).round());
+  final fadeOutSamples = math.max(1, (fadeOutSeconds * sampleRate).round());
+  final lowPassAlpha = lowPassHz == null
+      ? null
+      : 1 - math.exp(-2 * math.pi * lowPassHz / sampleRate);
+  var lowPassState = 0.0;
+  for (var i = 0; i < outputCount; i++) {
+    final sourcePosition = sourceStart + i * rate;
+    final lower = sourcePosition.floor();
+    final upper = math.min(lower + 1, source.length - 1);
+    final fraction = sourcePosition - lower;
+    final sample = source[lower] * (1 - fraction) + source[upper] * fraction;
+    if (lowPassAlpha != null) {
+      lowPassState += (sample - lowPassState) * lowPassAlpha;
+    }
+    final filteredSample = lowPassAlpha == null ? sample : lowPassState;
+    final fadeIn = (i / fadeInSamples).clamp(0.0, 1.0);
+    final fadeOut = ((outputCount - 1 - i) / fadeOutSamples).clamp(0.0, 1.0);
+    output[i] = filteredSample * math.min(fadeIn, fadeOut);
+  }
+  return _normalize(output, targetPeak);
+}
+
+List<double> _readMonoPcm16Wav(String path) {
+  final bytes = File(path).readAsBytesSync();
+  final view = ByteData.sublistView(bytes);
+  String ascii(int offset, int length) =>
+      String.fromCharCodes(bytes.sublist(offset, offset + length));
+  if (bytes.length < 44 || ascii(0, 4) != 'RIFF' || ascii(8, 4) != 'WAVE') {
+    throw FormatException('Not a RIFF/WAVE file: $path');
+  }
+
+  var offset = 12;
+  int? dataOffset;
+  int? dataLength;
+  var formatIsSupported = false;
+  while (offset + 8 <= bytes.length) {
+    final chunkId = ascii(offset, 4);
+    final chunkLength = view.getUint32(offset + 4, Endian.little);
+    final payload = offset + 8;
+    if (payload + chunkLength > bytes.length) break;
+    if (chunkId == 'fmt ' && chunkLength >= 16) {
+      formatIsSupported =
+          view.getUint16(payload, Endian.little) == 1 &&
+          view.getUint16(payload + 2, Endian.little) == 1 &&
+          view.getUint32(payload + 4, Endian.little) == sampleRate &&
+          view.getUint16(payload + 14, Endian.little) == 16;
+    } else if (chunkId == 'data') {
+      dataOffset = payload;
+      dataLength = chunkLength;
+    }
+    offset = payload + chunkLength + chunkLength.remainder(2);
+  }
+  if (!formatIsSupported || dataOffset == null || dataLength == null) {
+    throw FormatException('Expected mono PCM16 at 44.1 kHz: $path');
+  }
+
+  return List<double>.generate(
+    dataLength ~/ 2,
+    (index) => view.getInt16(dataOffset! + index * 2, Endian.little) / 32768.0,
+    growable: false,
+  );
+}
+
 double _ring(double t, double frequency, double decay, double gain) =>
     math.sin(2 * math.pi * frequency * t) * math.exp(-t * decay) * gain;
+
+double _burst(double t, double center, double width) {
+  final normalized = (t - center) / width;
+  return math.exp(-normalized * normalized);
+}
 
 double _delayedRing(
   double t,
@@ -191,6 +419,16 @@ double _softEnvelope(double progress) {
 double _stoneEnvelope(double progress) {
   final attack = (progress / 0.008).clamp(0.0, 1.0);
   return attack * math.pow(1 - progress, 3.25);
+}
+
+double _timedEnvelope(
+  double elapsedSeconds,
+  double progress,
+  double attackSeconds,
+  double decayPower,
+) {
+  final attack = (elapsedSeconds / attackSeconds).clamp(0.0, 1.0);
+  return attack * math.pow(1 - progress, decayPower);
 }
 
 List<double> _synthAuxiliary(String name, int seed) {

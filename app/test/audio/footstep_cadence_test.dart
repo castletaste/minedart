@@ -34,6 +34,28 @@ void main() {
       );
     });
 
+    test('sprint uses a denser but still distance-based cadence', () {
+      final cadence = FootstepCadence();
+      const stride = FootstepCadence.defaultSprintStrideBlocks;
+
+      expect(
+        cadence.update(
+          horizontalDistance: stride - 0.01,
+          grounded: true,
+          sprinting: true,
+        ),
+        isFalse,
+      );
+      expect(
+        cadence.update(
+          horizontalDistance: 0.01,
+          grounded: true,
+          sprinting: true,
+        ),
+        isTrue,
+      );
+    });
+
     test('a stalled frame emits at most one step and keeps only remainder', () {
       final cadence = FootstepCadence();
       const stride = FootstepCadence.classicStrideBlocks;

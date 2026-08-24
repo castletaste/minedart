@@ -1,4 +1,5 @@
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 import 'audio_cue.dart';
 
@@ -9,7 +10,6 @@ abstract interface class AudioPoolBackend {
     required AudioCue cue,
     required int variantIndex,
     required double volume,
-    required double pitch,
   });
 
   Future<void> dispose();
@@ -32,11 +32,19 @@ final class AudioplayersPoolBackend implements AudioPoolBackend {
         for (final cue in AudioCue.values) ...cue.assetPaths,
       };
       for (final assetPath in assetPaths) {
-        pools[assetPath] = await AudioPool.createFromAsset(
-          path: assetPath,
-          minPlayers: 1,
-          maxPlayers: maxPlayers,
-        );
+        pools[assetPath] = kIsWeb
+            ? await AudioPool.create(
+                source: UrlSource(
+                  Uri.base.resolve('assets/assets/$assetPath').toString(),
+                ),
+                minPlayers: 0,
+                maxPlayers: maxPlayers,
+              )
+            : await AudioPool.createFromAsset(
+                path: assetPath,
+                minPlayers: 1,
+                maxPlayers: maxPlayers,
+              );
       }
       return AudioplayersPoolBackend._(pools);
     } catch (_) {
@@ -50,30 +58,10 @@ final class AudioplayersPoolBackend implements AudioPoolBackend {
     required AudioCue cue,
     required int variantIndex,
     required double volume,
-    required double pitch,
   }) async {
     if (_disposed) return;
     final pool = _pools[cue.assetPathFor(variantIndex)]!;
-    // AudioPool's currentPlayers is intentionally visible for test support;
-    // it is the only public way to reach the player reserved by start().
-    // ignore: invalid_use_of_visible_for_testing_member
-    final before = pool.currentPlayers.keys.toSet();
     await pool.start(volume: volume);
-
-    // AudioPool.start intentionally exposes only a stop callback. Its public
-    // currentPlayers map lets us apply the per-invocation pitch to the player
-    // that was just reserved, while AudioPool still owns bounded reuse and
-    // completion cleanup.
-    // ignore: invalid_use_of_visible_for_testing_member
-    // ignore: invalid_use_of_visible_for_testing_member
-    final activePlayers = pool.currentPlayers.entries.toList();
-    final player = activePlayers
-        .firstWhere(
-          (entry) => !before.contains(entry.key),
-          orElse: () => activePlayers.last,
-        )
-        .value;
-    await player.setPlaybackRate(pitch);
   }
 
   @override
@@ -103,7 +91,10 @@ final class AudioService implements AudioServiceApi {
   AudioService._(this._backend, {this.maxSfxVolume = 1.0})
     : _sfxVolume = clampAudioVolume(maxSfxVolume);
 
-  /// Creates the platform-backed service and preloads one player per cue.
+  /// Creates the platform-backed service.
+  ///
+  /// Native platforms preload one player per asset. Web creates empty pools so
+  /// the first user-triggered playback performs exactly one lazy asset GET.
   static Future<AudioService> create({
     int maxPlayers = 8,
     double maxSfxVolume = 1.0,
@@ -166,7 +157,6 @@ final class AudioService implements AudioServiceApi {
       cue: cue,
       variantIndex: variation.variantIndex,
       volume: effectiveVolume,
-      pitch: clampAudioPitch(variation.pitch),
     );
   }
 

@@ -6,52 +6,48 @@ enum BlockAudioAction { breakBlock, placeBlock, step }
 /// Classic-inspired procedural cues. Material interactions deliberately share
 /// a bank of short samples, as Classic used its step sounds for breaking too.
 enum AudioCue {
-  stoneBreak(_stoneVariants, 0.64, 0.94, 1.02),
-  stonePlace(_stoneVariants, 0.48, 0.96, 1.03),
-  stoneHighBreak(_stoneVariants, 0.68, 1.34, 1.43),
-  stoneHighPlace(_stoneVariants, 0.52, 1.37, 1.46),
-  grassBreak(_grassVariants, 0.68, 0.99, 1.03),
-  grassPlace(_grassVariants, 0.52, 1.00, 1.03),
-  woodBreak(_woodVariants, 0.70, 0.99, 1.03),
-  woodPlace(_woodVariants, 0.54, 1.00, 1.03),
-  gravelBreak(_gravelVariants, 0.70, 0.97, 1.04),
-  gravelPlace(_gravelVariants, 0.54, 1.00, 1.06),
+  stoneBreak(_stoneVariants, 0.58),
+  stonePlace(_stoneVariants, 0.44),
+  stoneHighBreak(_glassVariants, 0.64),
+  stoneHighPlace(_glassVariants, 0.50),
+  grassBreak(_grassVariants, 0.60),
+  grassPlace(_grassVariants, 0.46),
+  woodBreak(_woodVariants, 0.70),
+  woodPlace(_woodVariants, 0.54),
+  gravelBreak(_gravelVariants, 0.52),
+  gravelPlace(_gravelVariants, 0.39),
   // Reserved because deterministic variation historically used enum indices;
   // removing this slot would change every later cue, including dirt.
-  legacyGrassStep(_grassVariants, 0.30, 0.98, 1.04),
-  water(['audio/water.wav'], 0.42, 0.96, 1.04),
-  tntFuse(['audio/tnt_fuse.wav'], 0.68, 0.98, 1.02),
-  explosion(['audio/explosion.wav'], 0.88, 0.92, 1.01),
-  uiClick(['audio/ui_click.wav'], 0.46, 0.99, 1.01),
-  dirtBreak(_dirtVariants, 0.58, 0.99, 1.02),
-  dirtPlace(_dirtVariants, 0.44, 1.00, 1.03),
-  leavesBreak(_leavesVariants, 0.54, 0.99, 1.02),
-  leavesPlace(_leavesVariants, 0.40, 1.00, 1.03),
-  stoneStep(_stoneVariants, 0.22, 0.90, 0.98),
-  stoneHighStep(_stoneVariants, 0.18, 1.16, 1.24),
-  grassStep(_grassVariants, 0.20, 0.94, 1.00),
-  dirtStep(_dirtVariants, 0.20, 0.94, 1.00),
-  leavesStep(_leavesVariants, 0.17, 0.94, 1.00),
-  woodStep(_woodVariants, 0.21, 0.94, 1.00),
-  gravelStep(_gravelVariants, 0.21, 0.92, 1.00),
-  metalBreak(_metalVariants, 0.60, 0.94, 1.02),
-  metalPlace(_metalVariants, 0.46, 0.96, 1.03),
-  metalStep(_metalVariants, 0.20, 0.92, 1.00);
+  legacyGrassStep(_grassVariants, 0.30),
+  water(['audio/water.wav'], 0.42),
+  tntFuse(['audio/tnt_fuse.wav'], 0.68),
+  explosion(['audio/explosion.wav'], 0.88),
+  uiClick(['audio/ui_click.wav'], 0.46),
+  dirtBreak(_dirtVariants, 0.56),
+  dirtPlace(_dirtVariants, 0.42),
+  leavesBreak(_leavesVariants, 0.54),
+  leavesPlace(_leavesVariants, 0.40),
+  stoneStep(_stoneVariants, 0.16),
+  stoneHighStep(_glassVariants, 0.16),
+  grassStep(_grassVariants, 0.14),
+  dirtStep(_dirtVariants, 0.16),
+  leavesStep(_leavesVariants, 0.17),
+  woodStep(_woodVariants, 0.19),
+  gravelStep(_gravelVariants, 0.13),
+  metalBreak(_metalVariants, 0.60),
+  metalPlace(_metalVariants, 0.46),
+  metalStep(_metalVariants, 0.18),
+  sandBreak(_sandVariants, 0.54),
+  sandPlace(_sandVariants, 0.40),
+  sandStep(_sandVariants, 0.14);
 
-  const AudioCue(
-    this.assetPaths,
-    this.baseVolume,
-    this.minPitch,
-    this.maxPitch,
-  );
+  const AudioCue(this.assetPaths, this.baseVolume);
 
   /// Paths relative to Flutter's `assets/` directory.
   final List<String> assetPaths;
 
   /// Cue-specific volume before the user SFX volume is applied.
   final double baseVolume;
-  final double minPitch;
-  final double maxPitch;
 
   String assetPathFor(int variantIndex) =>
       assetPaths[variantIndex % assetPaths.length];
@@ -87,6 +83,9 @@ enum AudioCue {
       (AudioMaterial.metal, BlockAudioAction.breakBlock) => metalBreak,
       (AudioMaterial.metal, BlockAudioAction.placeBlock) => metalPlace,
       (AudioMaterial.metal, BlockAudioAction.step) => metalStep,
+      (AudioMaterial.sand, BlockAudioAction.breakBlock) => sandBreak,
+      (AudioMaterial.sand, BlockAudioAction.placeBlock) => sandPlace,
+      (AudioMaterial.sand, BlockAudioAction.step) => sandStep,
       (AudioMaterial.water, _) => water,
     };
   }
@@ -107,7 +106,8 @@ enum AudioCue {
       Blocks.mushroomBrown ||
       Blocks.mushroomRed ||
       Blocks.sapling => AudioMaterial.leaves,
-      Blocks.sand || Blocks.gravel => AudioMaterial.gravel,
+      Blocks.sand => AudioMaterial.sand,
+      Blocks.gravel => AudioMaterial.gravel,
       Blocks.logOak || Blocks.planksOak => AudioMaterial.wood,
       Blocks.glass => AudioMaterial.stoneHigh,
       Blocks.goldBlock || Blocks.ironBlock => AudioMaterial.metal,
@@ -127,6 +127,7 @@ enum AudioMaterial {
   gravel,
   water,
   metal,
+  sand,
 }
 
 const _stoneVariants = <String>[
@@ -134,6 +135,12 @@ const _stoneVariants = <String>[
   'audio/stone_2.wav',
   'audio/stone_3.wav',
   'audio/stone_4.wav',
+];
+const _glassVariants = <String>[
+  'audio/glass_1.wav',
+  'audio/glass_2.wav',
+  'audio/glass_3.wav',
+  'audio/glass_4.wav',
 ];
 const _grassVariants = <String>[
   'audio/grass_1.wav',
@@ -165,6 +172,12 @@ const _gravelVariants = <String>[
   'audio/gravel_3.wav',
   'audio/gravel_4.wav',
 ];
+const _sandVariants = <String>[
+  'audio/sand_1.wav',
+  'audio/sand_2.wav',
+  'audio/sand_3.wav',
+  'audio/sand_4.wav',
+];
 const _metalVariants = <String>[
   'audio/metal_1.wav',
   'audio/metal_2.wav',
@@ -172,28 +185,22 @@ const _metalVariants = <String>[
   'audio/metal_4.wav',
 ];
 
-/// Deterministic per-playback sample, volume, and pitch selection.
+/// Deterministic per-playback sample and volume selection.
 final class AudioVariation {
-  const AudioVariation({
-    required this.variantIndex,
-    required this.volume,
-    required this.pitch,
-  });
+  const AudioVariation({required this.variantIndex, required this.volume});
 
   final int variantIndex;
   final double volume;
-  final double pitch;
 
   @override
   bool operator ==(Object other) {
     return other is AudioVariation &&
         other.variantIndex == variantIndex &&
-        other.volume == volume &&
-        other.pitch == pitch;
+        other.volume == volume;
   }
 
   @override
-  int get hashCode => Object.hash(variantIndex, volume, pitch);
+  int get hashCode => Object.hash(variantIndex, volume);
 }
 
 AudioVariation audioVariation(AudioCue cue, int seed) {
@@ -205,14 +212,10 @@ AudioVariation audioVariation(AudioCue cue, int seed) {
 
   final variantIndex = next() % cue.assetPaths.length;
   final volumeUnit = next() / 0x7FFFFFFF;
-  final pitchUnit = next() / 0x7FFFFFFF;
   return AudioVariation(
     variantIndex: variantIndex,
     volume: 0.96 + volumeUnit * 0.04,
-    pitch: cue.minPitch + (cue.maxPitch - cue.minPitch) * pitchUnit,
   );
 }
 
 double clampAudioVolume(double value) => value.clamp(0.0, 1.0).toDouble();
-
-double clampAudioPitch(double value) => value.clamp(0.5, 2.0).toDouble();

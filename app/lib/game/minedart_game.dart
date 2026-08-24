@@ -982,6 +982,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     if (_footstepCadence.update(
       horizontalDistance: math.sqrt(movedX * movedX + movedZ * movedZ),
       grounded: _playerBody.onGround,
+      sprinting: _sprintDetector.isSprinting,
     )) {
       _playFootstep();
     }
