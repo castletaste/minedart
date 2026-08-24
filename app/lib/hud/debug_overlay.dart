@@ -177,6 +177,7 @@ String formatPerformanceSnapshot(PerformanceSnapshot snapshot) =>
     '${snapshot.webCache.bindGroupMisses}';
 
 String _formatTiming(String label, TimingPercentiles timings) =>
-    '$label p50 ${timings.p50Ms.toStringAsFixed(1)}  '
+    '$label n ${timings.sampleCount}  '
+    'p50 ${timings.p50Ms.toStringAsFixed(1)}  '
     'p95 ${timings.p95Ms.toStringAsFixed(1)}  '
     'p99 ${timings.p99Ms.toStringAsFixed(1)} ms';

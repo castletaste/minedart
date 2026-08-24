@@ -86,6 +86,14 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   static const _keyboardLookSpeed = 1.35;
   static const defaultMouseSensitivity = 0.004;
   static const _pitchLimit = 89 * math.pi / 180;
+  static const _performanceSampleCapacity = int.fromEnvironment(
+    'MINEDART_PERF_SAMPLE_CAPACITY',
+    defaultValue: 240,
+  );
+  static const _performanceSnapshotIntervalMs = int.fromEnvironment(
+    'MINEDART_PERF_SNAPSHOT_INTERVAL_MS',
+    defaultValue: 250,
+  );
 
   final VoxelWorld voxelWorld;
   final MeshPipeline pipeline;
@@ -144,8 +152,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   late final TargetOutline targetOutline;
   late final BlockParticlePool particlePool;
   late final RenderLabBridge renderLab;
-  final FrameMetrics frameMetrics = FrameMetrics();
-  late final _performancePublisher = frameMetrics.createPublisher();
+  final FrameMetrics frameMetrics = FrameMetrics(
+    capacity: _performanceSampleCapacity,
+  );
+  late final _performancePublisher = frameMetrics.createPublisher(
+    interval: const Duration(milliseconds: _performanceSnapshotIntervalMs),
+  );
   final Stopwatch _performanceClock = Stopwatch()..start();
   StreamSubscription<ChunkMeshData>? _meshSub;
   StreamSubscription<MouseLookEvent>? _mouseSub;
