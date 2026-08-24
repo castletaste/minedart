@@ -6,7 +6,7 @@ import 'package:flame_3d/camera.dart';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show KeyEventResult;
 import 'package:minedart_core/minedart_core.dart';
@@ -722,8 +722,16 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   Future<void> _captureBrowserMouse() async {
     if (_uiInputCaptured) return;
-    await _browserPointerLock.capture();
-    if (_uiInputCaptured) _browserPointerLock.release();
+    try {
+      await _browserPointerLock.capture();
+      if (_uiInputCaptured) _browserPointerLock.release();
+    } on Object catch (error) {
+      // Pointer Lock can reject when the tab loses focus between pointer-down
+      // and the async browser request. It is a recoverable missed capture: the
+      // next click retries. Keep release consoles clean while retaining a
+      // diagnostic in debug builds.
+      if (kDebugMode) debugPrint('Could not capture browser mouse: $error');
+    }
   }
 
   Future<void> _releaseMouse() async {
