@@ -621,8 +621,11 @@ final class _BlockButton extends StatelessWidget {
     final edge = highContrast ? 2.0 : 1.0;
 
     return Semantics(
+      label: label,
       selected: selected,
       button: true,
+      onTap: onPressed,
+      excludeSemantics: true,
       child: FocusableActionDetector(
         child: Builder(
           builder: (context) => InkWell(

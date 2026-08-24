@@ -122,4 +122,44 @@ void main() {
       semantics.dispose();
     },
   );
+
+  testWidgets('hotbar number backplates stay attached across viewport resize', (
+    tester,
+  ) async {
+    final hud = HudState();
+    addTearDown(hud.dispose);
+
+    Future<void> pumpAt(Size size) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      await tester.pumpWidget(
+        Directionality(
+          textDirection: TextDirection.ltr,
+          child: HudOverlay(hud: hud, onPrimary: () {}, onSecondary: () {}),
+        ),
+      );
+      await tester.pump();
+    }
+
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+
+    for (final size in <Size>[
+      const Size(800, 600),
+      const Size(360, 420),
+      const Size(1440, 900),
+    ]) {
+      await pumpAt(size);
+      for (var index = 0; index < 9; index++) {
+        final slotRect = tester.getRect(find.byKey(HotbarKeys.slot(index)));
+        final numberFinder = find.byKey(HotbarKeys.number(index));
+        final numberRect = tester.getRect(numberFinder);
+        expect(slotRect.contains(numberRect.center), isTrue);
+        expect(numberRect.center.dx, lessThan(slotRect.center.dx));
+        expect(numberRect.center.dy, lessThan(slotRect.center.dy));
+        final number = tester.widget<Text>(numberFinder);
+        expect(number.style?.shadows, isNull);
+      }
+    }
+  });
 }

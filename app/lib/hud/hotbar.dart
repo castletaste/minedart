@@ -71,6 +71,9 @@ class Hotbar extends StatelessWidget {
 abstract final class HotbarKeys {
   static ValueKey<String> slot(int index) =>
       ValueKey<String>('hotbar-slot-$index');
+
+  static ValueKey<String> number(int index) =>
+      ValueKey<String>('hotbar-number-$index');
 }
 
 class _HotbarSlot extends StatelessWidget {
@@ -134,15 +137,22 @@ class _HotbarSlot extends StatelessWidget {
                     alignment: Alignment.topLeft,
                     child: Padding(
                       padding: const EdgeInsets.only(left: 2, top: 1),
-                      child: Text(
-                        '${index + 1}',
-                        style: const TextStyle(
-                          fontSize: 10,
-                          height: 1,
-                          color: Color(0xFFFFFFFF),
-                          shadows: <Shadow>[
-                            Shadow(color: Color(0xFF000000), blurRadius: 2),
-                          ],
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0x99000000),
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(2, 1, 2, 1),
+                          child: Text(
+                            '${index + 1}',
+                            key: HotbarKeys.number(index),
+                            style: const TextStyle(
+                              fontSize: 10,
+                              height: 1,
+                              color: Color(0xFFFFFFFF),
+                            ),
+                          ),
                         ),
                       ),
                     ),
@@ -159,9 +169,6 @@ class _HotbarSlot extends StatelessWidget {
                       color: active
                           ? const Color(0xFFFFFFFF)
                           : const Color(0xBBFFFFFF),
-                      shadows: const <Shadow>[
-                        Shadow(color: Color(0xFF000000), blurRadius: 2),
-                      ],
                     ),
                   ),
                 ],
