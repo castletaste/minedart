@@ -35,6 +35,26 @@ jobs:
           cache: true
           pub-cache: true
 
+      - name: Resolve vendored flame_3d dependencies
+        working-directory: third_party/flame_3d
+        run: flutter pub get
+
+      - name: Analyze vendored flame_3d
+        working-directory: third_party/flame_3d
+        run: flutter analyze
+
+      - name: Test vendored flame_3d on VM
+        working-directory: third_party/flame_3d
+        run: flutter test
+
+      - name: Test focused vendored flame_3d cache suite in Chrome
+        working-directory: third_party/flame_3d
+        run: flutter test --platform chrome test/graphics/backend/web_gpu/cache_policy_chrome_test.dart
+
+      - name: Compile focused vendored flame_3d cache-off arm in Chrome
+        working-directory: third_party/flame_3d
+        run: flutter test --platform chrome --dart-define=FLAME_3D_WEBGPU_BIND_CACHE=false test/graphics/backend/web_gpu/cache_policy_define_off_chrome_test.dart
+
       - name: Resolve locked dependencies
         run: flutter pub get --enforce-lockfile
 

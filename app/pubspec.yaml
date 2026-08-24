@@ -10,7 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   flame: ^1.38.0
-  flame_3d: ^0.3.0
+  flame_3d:
+    path: ../third_party/flame_3d
   minedart_core:
     path: ../packages/core
   vector_math: ^2.1.4
