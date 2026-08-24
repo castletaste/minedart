@@ -17,7 +17,9 @@ final class PackedSurface extends Surface {
        // A public `indices` argument keeps call sites aligned with Surface.
        // ignore: prefer_initializing_formals
        _indices = indices,
-       _positions = _extractPositions(vertices),
+       // Known bounds let the hot path defer the separate XYZ allocation
+       // until a caller actually asks for Surface.positions.
+       _positions = aabb == null ? _extractPositions(vertices) : null,
        _aabb = aabb ?? _calculateAabb(vertices),
        super(
          vertices: [_dummyVertex],
@@ -34,8 +36,14 @@ final class PackedSurface extends Surface {
 
   final Float32List _vertices;
   final Uint16List _indices;
-  final Float32List _positions;
+  Float32List? _positions;
   final Aabb3 _aabb;
+
+  /// Whether the separate public XYZ view has been materialized.
+  ///
+  /// This is exposed for allocation telemetry and focused regression tests;
+  /// rendering continues to use the original packed vertex buffer directly.
+  bool get hasMaterializedPositions => _positions != null;
 
   @override
   int get verticesBytes => _vertices.lengthInBytes;
@@ -50,7 +58,7 @@ final class PackedSurface extends Surface {
   int get indexCount => _indices.length;
 
   @override
-  Float32List get positions => _positions;
+  Float32List get positions => _positions ??= _extractPositions(_vertices);
 
   @override
   Uint16List get indices => _indices;
