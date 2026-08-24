@@ -1,5 +1,14 @@
 # WebGPU performance evidence — 2026-08-25
 
+## Evidence scope
+
+These measurements were captured while `e3b0162` was HEAD, with later audio
+work still present as uncommitted working-tree changes. Subsequent eviction,
+audio, hotbar, and modal-input commits were not part of this capture. The data
+is retained as directional bind-cache evidence, not as a current-HEAD release
+performance pass. A release claim must rerun the complete benchmark contract
+from `web_performance_0_4.md` on a recorded clean commit.
+
 ## Method
 
 - Flutter Wasm release in Chrome's WebGPU backend.
@@ -31,13 +40,15 @@ All timing cells are p50 / p95 / p99 milliseconds.
 | 10 | off B | 8.3 / 10.3 / 16.8 | 0.2 / 0.3 / 0.4 | 4.9 / 7.6 / 8.5 | 304 | 0 / 608 | 0 / 304 |
 | 10 | on A2 | 8.3 / 10.1 / 10.3 | 0.1 / 0.3 / 0.3 | 3.9 / 4.4 / 5.7 | 304 | 606 / 2 | 303 / 1 |
 
-## Acceptance verdict
+## Directional result against the cache threshold
 
 - RD 6 CPU-render median reduction: 17.2% in both on arms versus off.
 - RD 10 CPU-render median reduction: 22.4% (A) and 20.4% (A2) versus off.
 - Frame p95 did not regress: it was unchanged at RD 6 and 0.1-0.2 ms lower
   in both RD 10 cache-on arms.
-- The required >=15% median CPU-render reduction is met at both distances.
+- This capture crosses the >=15% median CPU-render threshold at both
+  distances; current-HEAD acceptance remains unclaimed for the scope reason
+  above.
 - Cache-off counters prove the kill-switch arm performed no cache hits.
 - Chrome console was empty after every captured arm.
 

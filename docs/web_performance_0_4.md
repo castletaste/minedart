@@ -1,7 +1,9 @@
 # Minedart Web performance 0.4
 
-Status: design revision after cross-brand rejection; no production cache code
-has been implemented yet.
+Status: production implementation landed in `e3b0162` after independent
+cross-brand review. Release claims remain subject to the benchmark and live-QA
+contract below; see `web_performance_results_2026-08-25.md` for the captured
+historical evidence and its scope limits.
 
 ## Baseline and non-goals
 
@@ -16,7 +18,7 @@ has been implemented yet.
 
 ## Vendored upstream integrity
 
-Production will use a direct path dependency at `third_party/flame_3d`, copied
+Production uses a direct path dependency at `third_party/flame_3d`, copied
 from the exact hosted package, not `dependency_overrides`.
 
 The vendored package must:
