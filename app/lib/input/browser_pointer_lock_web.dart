@@ -1,14 +1,20 @@
 import 'dart:async';
 import 'dart:js_interop';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, visibleForTesting;
 import 'package:web/web.dart' as web;
 
 import 'mouse_look.dart';
 
 /// Pointer Lock bridge for Chrome/Edge/Safari WebGPU builds.
 final class BrowserPointerLock {
-  BrowserPointerLock() {
+  BrowserPointerLock() : this._(null);
+
+  @visibleForTesting
+  BrowserPointerLock.forTesting({required bool Function() isLocked})
+    : this._(isLocked);
+
+  BrowserPointerLock._(this._isLockedOverride) {
     _mouseMoveListener = ((web.Event event) {
       if (!isLocked) return;
       final mouse = event as web.MouseEvent;
@@ -58,6 +64,7 @@ final class BrowserPointerLock {
   }
 
   final _events = StreamController<MouseLookEvent>.broadcast(sync: true);
+  final bool Function()? _isLockedOverride;
   late final web.EventListener _mouseMoveListener;
   late final web.EventListener _lockChangeListener;
   late final web.EventListener _lockErrorListener;
@@ -66,7 +73,8 @@ final class BrowserPointerLock {
   bool _lastLocked = false;
   int _lastSecondaryMicros = 0;
 
-  bool get isLocked => web.document.pointerLockElement != null;
+  bool get isLocked =>
+      _isLockedOverride?.call() ?? web.document.pointerLockElement != null;
   Stream<MouseLookEvent> get events => _events.stream;
 
   void _emitSecondary() {
