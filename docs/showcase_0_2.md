@@ -1,13 +1,14 @@
 # Minedart Classic Showcase 0.2 — implementation contract
 
-Status: implemented and locally validated on 2026-08-24. Multiplayer is
-explicitly out of scope.
+Status: historical 0.2 snapshot, superseded by `ux_redesign_0_3.md` and
+`deep_links.md`. The current product keeps multiplayer out of scope and does
+not expose removed 0.2-only surfaces or bindings.
 
 ## Product acceptance
 
 - 32 selectable non-air blocks, preserving IDs 1..21 for MDRT1 saves.
-- `B` opens an adaptive Builder Studio: side panel at >=900 px, centered
-  dialog/sheet below it; full keyboard/focus/semantics support.
+- `E` opens the compact block inventory; keyboard/focus/semantics remain
+  supported at compact and desktop sizes.
 - Classic controls: `F` cycles fog presets, `Enter` saves a teleport point,
   `R` teleports to it; noclip moves to a rebindable action.
 - Target outline, pooled block particles, procedural/CC0 audio.
@@ -18,8 +19,8 @@ explicitly out of scope.
   Import/export uses the same MDRT2 bytes. MDRT1 remains readable.
 - World Library supports create, load, rename, duplicate, delete/reset,
   import/export and seed sharing. Destructive UI still confirms explicitly.
-- Flutter showcase: Render Lab, expanded F3 frame graph, photo mode, minimap
-  editor, adaptive settings/input rebinding, high contrast/reduced motion.
+- Flutter showcase: Render Lab, expanded F3 frame graph, passive minimap,
+  adaptive settings/input rebinding, high contrast/reduced motion.
 - macOS release >=60 FPS on the current Apple Silicon machine; web remains
   playable after initial time-sliced meshing.
 
@@ -99,9 +100,10 @@ explicitly out of scope.
 - Web Wasm release: verified by `tool/build_web_release.sh` (76 files, largest
   asset 7,229,467 bytes). Live WebGPU smoke showed ~57 FPS, p50 16.7 ms and
   p95 25.0 ms at render distance 6 with an empty mesh queue.
-- Browser runtime checks covered seed/preset/builder deep links, Builder
-  Studio, Pause, World Library, Render Lab, Photo Mode, F3, IndexedDB startup,
-  water rendering and water on the minimap with no relevant console errors.
+- Current browser contracts cover seed/preset/world deep links, compact
+  inventory, Pause, World Library, Render Lab, F3, IndexedDB startup, water
+  rendering and water on the minimap. Removed 0.2 URL/UI surfaces are not
+  supported.
 - The polish pass adds double-W sprint, 200 ms falling-block cadence,
   material-specific soft grass/dirt/wood/leaves audio, noclip minimap tracking,
   and light-blocking alpha-cutout leaves.
