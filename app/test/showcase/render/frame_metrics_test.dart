@@ -62,5 +62,22 @@ void main() {
       expect(metrics.length, 1);
       expect(metrics.latestFrameTimeMs, 16);
     });
+
+    test('supports independent explicitly named CPU timing channels', () {
+      final metrics = FrameMetrics(capacity: 4)
+        ..recordWallFrame(16)
+        ..recordUpdate(2)
+        ..recordUpdate(4)
+        ..recordCpuRender(6)
+        ..recordMainThreadMesh(1);
+
+      final snapshot = metrics.snapshot();
+      expect(snapshot.wallFrame.sampleCount, 1);
+      expect(snapshot.update.sampleCount, 2);
+      expect(snapshot.cpuRender.sampleCount, 1);
+      expect(snapshot.cpuRender.p50Ms, 6);
+      expect(snapshot.mainThreadMesh.sampleCount, 1);
+      expect(snapshot.mainThreadMesh.p50Ms, 1);
+    });
   });
 }

@@ -1,10 +1,16 @@
 import 'dart:typed_data';
 
-/// Timings retained by [FrameMetrics].
+import '../../performance/performance_snapshot.dart';
+import '../../performance/performance_snapshot_publisher.dart';
+import '../../performance/performance_telemetry.dart';
+
+/// Legacy metric names retained by the F3 graph API.
+///
+/// [render] is CPU render-submission time. It never represents GPU execution
+/// time. New code should prefer [PerformanceMetric].
 enum FrameMetric { frame, update, render, mesh }
 
-/// Immutable percentile readout. Creating this is a UI/readout operation;
-/// frame sampling itself remains allocation-stable.
+/// Immutable percentile readout retained for F3 source compatibility.
 final class FramePercentiles {
   const FramePercentiles({
     required this.p50,
@@ -19,43 +25,27 @@ final class FramePercentiles {
   final double p99;
 }
 
-/// Fixed-capacity, allocation-stable frame timing ring.
+/// Backward-compatible F3 facade over [PerformanceTelemetry].
 ///
-/// [record] only writes primitive values into preallocated typed buffers.
-/// Percentile reads reuse one preallocated scratch buffer and use nearest-rank
-/// quantiles, so repeated F3 readouts do not grow the heap either.
+/// Existing synchronized [record] calls and the wall-frame graph remain
+/// available. New instrumentation can sample each channel independently and
+/// publish one four-channel percentile snapshot at a throttled boundary.
 final class FrameMetrics {
   FrameMetrics({this.capacity = 240})
-    : assert(capacity > 0),
-      _frame = Float64List(capacity),
-      _update = Float64List(capacity),
-      _render = Float64List(capacity),
-      _mesh = Float64List(capacity),
-      _scratch = Float64List(capacity) {
-    if (capacity <= 0) {
-      throw ArgumentError.value(capacity, 'capacity', 'must be positive');
-    }
-  }
+    : _telemetry = PerformanceTelemetry(capacity: capacity);
 
   final int capacity;
-  final Float64List _frame;
-  final Float64List _update;
-  final Float64List _render;
-  final Float64List _mesh;
-  final Float64List _scratch;
+  final PerformanceTelemetry _telemetry;
 
-  int _length = 0;
-  int _writeIndex = 0;
-  int _totalSamples = 0;
-  double _frameSum = 0;
-
-  int get length => _length;
-  int get totalSamples => _totalSamples;
-  bool get isEmpty => _length == 0;
-  bool get isFull => _length == capacity;
+  PerformanceTelemetry get telemetry => _telemetry;
+  int get length => _telemetry.sampleCount(PerformanceMetric.wallFrame);
+  int get totalSamples => _telemetry.totalSamples(PerformanceMetric.wallFrame);
+  bool get isEmpty => length == 0;
+  bool get isFull => length == capacity;
   double get latestFrameTimeMs =>
-      isEmpty ? 0 : _frame[(_writeIndex - 1 + capacity) % capacity];
-  double get averageFrameTimeMs => isEmpty ? 0 : _frameSum / _length;
+      _telemetry.latestSample(PerformanceMetric.wallFrame);
+  double get averageFrameTimeMs =>
+      _telemetry.averageSample(PerformanceMetric.wallFrame);
   double get averageFps =>
       averageFrameTimeMs <= 0 ? 0 : 1000 / averageFrameTimeMs;
 
@@ -63,31 +53,33 @@ final class FrameMetrics {
   double get p95 => percentile(0.95);
   double get p99 => percentile(0.99);
 
-  /// Adds one sample in milliseconds without allocating an intermediate object.
+  /// Legacy synchronized sample API.
+  ///
+  /// [renderTimeMs] is explicitly CPU render-submission time. Independent new
+  /// call sites should use the channel-specific methods below so omitted work
+  /// is not represented by an artificial zero sample.
   void record({
     required double frameTimeMs,
     double updateTimeMs = 0,
     double renderTimeMs = 0,
     double meshTimeMs = 0,
   }) {
-    _checkTiming(frameTimeMs, 'frameTimeMs');
-    _checkTiming(updateTimeMs, 'updateTimeMs');
-    _checkTiming(renderTimeMs, 'renderTimeMs');
-    _checkTiming(meshTimeMs, 'meshTimeMs');
-
-    if (_length == capacity) {
-      _frameSum -= _frame[_writeIndex];
-    } else {
-      _length++;
-    }
-    _frame[_writeIndex] = frameTimeMs;
-    _update[_writeIndex] = updateTimeMs;
-    _render[_writeIndex] = renderTimeMs;
-    _mesh[_writeIndex] = meshTimeMs;
-    _frameSum += frameTimeMs;
-    _writeIndex = (_writeIndex + 1) % capacity;
-    _totalSamples++;
+    _telemetry.recordTimings(
+      wallFrameMs: frameTimeMs,
+      updateMs: updateTimeMs,
+      cpuRenderMs: renderTimeMs,
+      mainThreadMeshMs: meshTimeMs,
+    );
   }
+
+  void recordWallFrame(double milliseconds) =>
+      _telemetry.recordWallFrame(milliseconds);
+  void recordUpdate(double milliseconds) =>
+      _telemetry.recordUpdate(milliseconds);
+  void recordCpuRender(double milliseconds) =>
+      _telemetry.recordCpuRender(milliseconds);
+  void recordMainThreadMesh(double milliseconds) =>
+      _telemetry.recordMainThreadMesh(milliseconds);
 
   void add(double frameTimeMs) => record(frameTimeMs: frameTimeMs);
 
@@ -103,74 +95,70 @@ final class FrameMetrics {
     meshTimeMs: mesh.inMicroseconds / 1000,
   );
 
-  double percentile(double quantile, {FrameMetric metric = FrameMetric.frame}) {
-    if (quantile < 0 || quantile > 1 || !quantile.isFinite) {
-      throw RangeError.range(quantile, 0, 1, 'quantile');
-    }
-    if (_length == 0) return 0;
-    final source = _bufferFor(metric);
-    for (var i = 0; i < _length; i++) {
-      _scratch[i] = source[i];
-    }
-    _sortScratch(_length);
-    final rank = quantile == 0 ? 0 : (quantile * _length).ceil() - 1;
-    return _scratch[rank.clamp(0, _length - 1)];
+  double percentile(
+    double quantile, {
+    FrameMetric metric = FrameMetric.frame,
+  }) => _telemetry.percentile(_performanceMetric(metric), quantile);
+
+  /// Computes p50/p95/p99 with one sort for the requested metric.
+  FramePercentiles percentiles({FrameMetric metric = FrameMetric.frame}) {
+    final timings = _telemetry.percentiles(_performanceMetric(metric));
+    if (timings.isEmpty) return FramePercentiles.zero;
+    return FramePercentiles(
+      p50: timings.p50Ms,
+      p95: timings.p95Ms,
+      p99: timings.p99Ms,
+    );
   }
 
-  FramePercentiles percentiles({FrameMetric metric = FrameMetric.frame}) =>
-      isEmpty
-      ? FramePercentiles.zero
-      : FramePercentiles(
-          p50: percentile(0.50, metric: metric),
-          p95: percentile(0.95, metric: metric),
-          p99: percentile(0.99, metric: metric),
-        );
+  /// Computes all four metric summaries with one sort per non-empty channel.
+  PerformanceSnapshot snapshot() => _telemetry.snapshot();
+
+  PerformanceSnapshotPublisher createPublisher({
+    Duration interval = PerformanceSnapshotPublisher.minimumInterval,
+  }) => PerformanceSnapshotPublisher(_telemetry, interval: interval);
+
+  void updateSnapshotFields({
+    required int drawCount,
+    required int meshQueue,
+    required double devicePixelRatio,
+    required int effectiveTargetWidth,
+    required int effectiveTargetHeight,
+    required int retainedComponentCount,
+    required int retainedMeshBytes,
+    required int uniformUploadHits,
+    required int uniformUploadMisses,
+    required int bindGroupHits,
+    required int bindGroupMisses,
+  }) {
+    _telemetry.updateSnapshotFields(
+      drawCount: drawCount,
+      meshQueue: meshQueue,
+      devicePixelRatio: devicePixelRatio,
+      effectiveTargetWidth: effectiveTargetWidth,
+      effectiveTargetHeight: effectiveTargetHeight,
+      retainedComponentCount: retainedComponentCount,
+      retainedMeshBytes: retainedMeshBytes,
+      uniformUploadHits: uniformUploadHits,
+      uniformUploadMisses: uniformUploadMisses,
+      bindGroupHits: bindGroupHits,
+      bindGroupMisses: bindGroupMisses,
+    );
+  }
 
   /// Copies samples oldest-to-newest into caller-owned storage.
   int copyTo(
     Float64List destination, {
     FrameMetric metric = FrameMetric.frame,
-  }) {
-    if (destination.length < _length) {
-      throw RangeError.range(destination.length, _length, null, 'length');
-    }
-    final source = _bufferFor(metric);
-    final oldest = _length == capacity ? _writeIndex : 0;
-    for (var i = 0; i < _length; i++) {
-      destination[i] = source[(oldest + i) % capacity];
-    }
-    return _length;
-  }
+  }) =>
+      _telemetry.copySamplesTo(destination, metric: _performanceMetric(metric));
 
-  void clear() {
-    _length = 0;
-    _writeIndex = 0;
-    _totalSamples = 0;
-    _frameSum = 0;
-  }
-
-  Float64List _bufferFor(FrameMetric metric) => switch (metric) {
-    FrameMetric.frame => _frame,
-    FrameMetric.update => _update,
-    FrameMetric.render => _render,
-    FrameMetric.mesh => _mesh,
-  };
-
-  void _sortScratch(int count) {
-    for (var i = 1; i < count; i++) {
-      final value = _scratch[i];
-      var j = i - 1;
-      while (j >= 0 && _scratch[j] > value) {
-        _scratch[j + 1] = _scratch[j];
-        j--;
-      }
-      _scratch[j + 1] = value;
-    }
-  }
+  void clear() => _telemetry.clearSamples();
 }
 
-void _checkTiming(double value, String name) {
-  if (!value.isFinite || value < 0) {
-    throw ArgumentError.value(value, name, 'must be finite and non-negative');
-  }
-}
+PerformanceMetric _performanceMetric(FrameMetric metric) => switch (metric) {
+  FrameMetric.frame => PerformanceMetric.wallFrame,
+  FrameMetric.update => PerformanceMetric.update,
+  FrameMetric.render => PerformanceMetric.cpuRender,
+  FrameMetric.mesh => PerformanceMetric.mainThreadMesh,
+};

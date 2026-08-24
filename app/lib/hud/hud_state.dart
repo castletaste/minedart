@@ -7,6 +7,7 @@ library;
 
 import 'package:flutter/foundation.dart';
 
+import '../performance/performance_snapshot.dart';
 import 'block_palette.dart';
 
 /// Snapshot rendered by the debug overlay.
@@ -24,6 +25,7 @@ final class DebugStats {
     this.meshQueue = 0,
     this.renderDistance = 0,
     this.sprinting = false,
+    this.performance,
   });
 
   static const DebugStats empty = DebugStats(
@@ -46,6 +48,7 @@ final class DebugStats {
   final int meshQueue;
   final int renderDistance;
   final bool sprinting;
+  final PerformanceSnapshot? performance;
 
   @override
   bool operator ==(Object other) =>
@@ -60,7 +63,8 @@ final class DebugStats {
       other.loadedChunks == loadedChunks &&
       other.meshQueue == meshQueue &&
       other.renderDistance == renderDistance &&
-      other.sprinting == sprinting;
+      other.sprinting == sprinting &&
+      other.performance == performance;
 
   @override
   int get hashCode => Object.hash(
@@ -75,6 +79,7 @@ final class DebugStats {
     meshQueue,
     renderDistance,
     sprinting,
+    performance,
   );
 }
 
@@ -100,6 +105,7 @@ final class HudState {
   double _fps = 0;
   double _statsAge = 0;
   String _lastAction = '-';
+  PerformanceSnapshot? _performanceSnapshot;
 
   /// Frame-rate EMA; 0 until the first frame is recorded.
   double get fps => _fps;
@@ -160,6 +166,14 @@ final class HudState {
     _lastAction = action;
   }
 
+  /// Retains the latest already-throttled performance readout for F3.
+  ///
+  /// Supplying a snapshot does not notify on its own; [recordFrame] keeps HUD
+  /// publication bounded by [statsInterval].
+  void updatePerformanceSnapshot(PerformanceSnapshot snapshot) {
+    _performanceSnapshot = snapshot;
+  }
+
   /// Feeds one rendered frame; publishes stats on [statsInterval] boundaries.
   void recordFrame(
     double dt,
@@ -192,6 +206,7 @@ final class HudState {
       meshQueue: meshQueue,
       renderDistance: renderDistance,
       sprinting: sprinting,
+      performance: _performanceSnapshot,
     );
   }
 

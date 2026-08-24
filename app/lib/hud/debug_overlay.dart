@@ -5,8 +5,9 @@ import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 
-import 'hud_state.dart';
+import '../performance/performance_snapshot.dart';
 import '../showcase/render/frame_metrics.dart';
+import 'hud_state.dart';
 
 class DebugOverlay extends StatelessWidget {
   const DebugOverlay({required this.hud, this.frameMetrics, super.key});
@@ -47,25 +48,11 @@ class DebugOverlay extends StatelessWidget {
                           fontFamilyFallback: <String>['Menlo', 'Courier'],
                         ),
                       ),
-                      if (frameMetrics case final metrics?) ...[
-                        Text(
-                          'frame p50 ${metrics.p50.toStringAsFixed(1)} ms  '
-                          'p95 ${metrics.p95.toStringAsFixed(1)} ms',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            color: Color(0xFFD6FAD0),
-                            fontFamily: 'monospace',
-                          ),
+                      if (frameMetrics case final metrics?)
+                        ..._frameMetricWidgets(
+                          metrics,
+                          includeLegacySummary: stats.performance == null,
                         ),
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          width: 190,
-                          height: 48,
-                          child: CustomPaint(
-                            painter: _FrameGraphPainter(metrics),
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -76,13 +63,39 @@ class DebugOverlay extends StatelessWidget {
       },
     );
   }
+
+  List<Widget> _frameMetricWidgets(
+    FrameMetrics metrics, {
+    required bool includeLegacySummary,
+  }) {
+    final percentiles = includeLegacySummary ? metrics.percentiles() : null;
+    return <Widget>[
+      if (percentiles != null)
+        Text(
+          'wall frame p50 ${percentiles.p50.toStringAsFixed(1)}  '
+          'p95 ${percentiles.p95.toStringAsFixed(1)}  '
+          'p99 ${percentiles.p99.toStringAsFixed(1)} ms',
+          style: const TextStyle(
+            fontSize: 10,
+            color: Color(0xFFD6FAD0),
+            fontFamily: 'monospace',
+          ),
+        ),
+      const SizedBox(height: 6),
+      SizedBox(
+        width: 190,
+        height: 48,
+        child: CustomPaint(painter: _FrameGraphPainter(metrics)),
+      ),
+    ];
+  }
 }
 
 final class _FrameGraphPainter extends CustomPainter {
-  _FrameGraphPainter(this.metrics);
+  _FrameGraphPainter(this.metrics) : _samples = Float64List(metrics.capacity);
 
   final FrameMetrics metrics;
-  final Float64List _samples = Float64List(240);
+  final Float64List _samples;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -127,11 +140,43 @@ String formatDebugStats(DebugStats stats) {
   final x = stats.x.toStringAsFixed(2);
   final y = stats.y.toStringAsFixed(2);
   final z = stats.z.toStringAsFixed(2);
-  return 'fps $fps\n'
-      'xyz $x / $y / $z\n'
+  final performance = stats.performance;
+  final meshQueue = performance?.meshQueue ?? stats.meshQueue;
+  final buffer = StringBuffer()
+    ..writeln('fps $fps')
+    ..writeln('xyz $x / $y / $z')
+    ..writeln(
       'chunks ${stats.visibleChunks}/${stats.loadedChunks}  '
-      'mesh queue ${stats.meshQueue}  rd ${stats.renderDistance}\n'
-      'movement: ${stats.sprinting ? 'sprint' : 'walk'}\n'
-      'block ${stats.blockName}\n'
-      'action ${stats.lastAction}';
+      'mesh queue $meshQueue  rd ${stats.renderDistance}',
+    )
+    ..writeln('movement: ${stats.sprinting ? 'sprint' : 'walk'}');
+  if (performance != null) {
+    buffer.writeln(formatPerformanceSnapshot(performance));
+  }
+  buffer
+    ..writeln('block ${stats.blockName}')
+    ..write('action ${stats.lastAction}');
+  return buffer.toString();
 }
+
+/// Pure F3 formatting for an already-computed, throttled snapshot.
+String formatPerformanceSnapshot(PerformanceSnapshot snapshot) =>
+    '${_formatTiming('wall frame', snapshot.wallFrame)}\n'
+    '${_formatTiming('update', snapshot.update)}\n'
+    '${_formatTiming('cpu render', snapshot.cpuRender)}\n'
+    '${_formatTiming('cpu mesh drain', snapshot.mainThreadMesh)}\n'
+    'draws ${snapshot.drawCount}  '
+    'target ${snapshot.effectiveTargetWidth}x${snapshot.effectiveTargetHeight} '
+    'px @ dpr ${snapshot.devicePixelRatio.toStringAsFixed(2)}\n'
+    'retained components ${snapshot.retainedComponentCount}  '
+    'mesh bytes ${snapshot.retainedMeshBytes}\n'
+    'web uniform upload hit/miss '
+    '${snapshot.webCache.uniformUploadHits}/'
+    '${snapshot.webCache.uniformUploadMisses}  '
+    'bind-group hit/miss ${snapshot.webCache.bindGroupHits}/'
+    '${snapshot.webCache.bindGroupMisses}';
+
+String _formatTiming(String label, TimingPercentiles timings) =>
+    '$label p50 ${timings.p50Ms.toStringAsFixed(1)}  '
+    'p95 ${timings.p95Ms.toStringAsFixed(1)}  '
+    'p99 ${timings.p99Ms.toStringAsFixed(1)} ms';
