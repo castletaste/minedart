@@ -137,22 +137,12 @@ class _HotbarSlot extends StatelessWidget {
                     alignment: Alignment.topLeft,
                     child: Padding(
                       padding: const EdgeInsets.only(left: 2, top: 1),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0x99000000),
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(2, 1, 2, 1),
-                          child: Text(
-                            '${index + 1}',
-                            key: HotbarKeys.number(index),
-                            style: const TextStyle(
-                              fontSize: 10,
-                              height: 1,
-                              color: Color(0xFFFFFFFF),
-                            ),
-                          ),
+                      child: SizedBox(
+                        key: HotbarKeys.number(index),
+                        width: 9,
+                        height: 11,
+                        child: CustomPaint(
+                          painter: _HotbarNumberPainter(index + 1),
                         ),
                       ),
                     ),
@@ -179,4 +169,60 @@ class _HotbarSlot extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Paints slot numbers as pixels instead of glyphs. On macOS Impeller, text
+/// glyph layers can remain at their pre-fullscreen transform while the rest of
+/// a scaled hotbar moves. Keeping the number in the slot's canvas avoids that
+/// independent raster-cache layer.
+final class _HotbarNumberPainter extends CustomPainter {
+  const _HotbarNumberPainter(this.value);
+
+  final int value;
+
+  static const List<List<int>> _rows = <List<int>>[
+    <int>[0, 0, 0, 0, 0],
+    <int>[2, 6, 2, 2, 7],
+    <int>[6, 1, 2, 4, 7],
+    <int>[6, 1, 2, 1, 6],
+    <int>[5, 5, 7, 1, 1],
+    <int>[7, 4, 6, 1, 6],
+    <int>[3, 4, 7, 5, 7],
+    <int>[7, 1, 2, 2, 2],
+    <int>[7, 5, 7, 5, 7],
+    <int>[7, 5, 7, 1, 6],
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final background = Paint()
+      ..isAntiAlias = false
+      ..color = const Color(0x99000000);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(2)),
+      background,
+    );
+
+    final pixels = Paint()
+      ..isAntiAlias = false
+      ..color = const Color(0xFFFFFFFF);
+    final rows = _rows[value.clamp(1, 9)];
+    const pixel = 1.5;
+    const left = 2.25;
+    const top = 1.75;
+    for (var row = 0; row < rows.length; row++) {
+      final mask = rows[row];
+      for (var column = 0; column < 3; column++) {
+        if (mask & (1 << (2 - column)) == 0) continue;
+        canvas.drawRect(
+          Rect.fromLTWH(left + column * pixel, top + row * pixel, pixel, pixel),
+          pixels,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_HotbarNumberPainter oldDelegate) =>
+      oldDelegate.value != value;
 }

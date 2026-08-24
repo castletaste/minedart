@@ -157,8 +157,10 @@ void main() {
         expect(slotRect.contains(numberRect.center), isTrue);
         expect(numberRect.center.dx, lessThan(slotRect.center.dx));
         expect(numberRect.center.dy, lessThan(slotRect.center.dy));
-        final number = tester.widget<Text>(numberFinder);
-        expect(number.style?.shadows, isNull);
+        expect(
+          find.descendant(of: numberFinder, matching: find.byType(Text)),
+          findsNothing,
+        );
       }
     }
   });
