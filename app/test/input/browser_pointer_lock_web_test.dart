@@ -1,3 +1,6 @@
+@TestOn('browser')
+library;
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/input/browser_pointer_lock_web.dart';
 import 'package:minedart/input/mouse_look.dart';
