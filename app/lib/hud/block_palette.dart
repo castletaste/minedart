@@ -1,12 +1,14 @@
 /// HUD palette: hotbar contents and flat swatch colors per block.
 ///
-/// Colors approximate the generated atlas tiles (see bin/make_atlas.dart);
-/// the HUD draws flat squares instead of rendering 3D previews.
+/// The HUD draws flat squares instead of rendering 3D previews. Swatches track
+/// the atlas selected by `MINEDART_ATLAS`.
 library;
 
 import 'dart:ui' show Color;
 
 import 'package:minedart_core/minedart_core.dart';
+
+import '../assets/atlas_selection.dart';
 
 /// The nine hotbar slots, in order.
 const List<int> kHotbarBlocks = <int>[
@@ -21,8 +23,8 @@ const List<int> kHotbarBlocks = <int>[
   Blocks.tnt,
 ];
 
-/// Flat swatch color per block id, sampled from the atlas generator.
-const Map<int, Color> kBlockColors = <int, Color>{
+/// Exact flat swatches used with the immutable legacy atlas.
+const Map<int, Color> kLegacyBlockColors = <int, Color>{
   Blocks.stone: Color(0xFF7D7D7D),
   Blocks.dirt: Color(0xFF80512E),
   Blocks.grass: Color(0xFF549A39),
@@ -57,9 +59,59 @@ const Map<int, Color> kBlockColors = <int, Color>{
   Blocks.clothBlue: Color(0xFF395FAF),
 };
 
+/// Flat swatches generated from the completed Alpha-like atlas masters.
+///
+/// Each opaque RGB value is the integer-half-up, alpha-weighted mean of the
+/// representative 16x16 master. Grass uses its top master; logs and TNT use
+/// their side masters. Tests recalculate these constants from the master PNGs.
+const Map<int, Color> kAlphaBlockColors = <int, Color>{
+  Blocks.stone: Color(0xFF79787A),
+  Blocks.dirt: Color(0xFF774C2F),
+  Blocks.grass: Color(0xFF529735),
+  Blocks.sand: Color(0xFFCBB98E),
+  Blocks.gravel: Color(0xFF7C6D6D),
+  Blocks.logOak: Color(0xFF48351D),
+  Blocks.leavesOak: Color(0xFF35711D),
+  Blocks.water: Color(0xFF1137AC),
+  Blocks.bedrock: Color(0xFF383634),
+  Blocks.oreCoal: Color(0xFF6E6D6F),
+  Blocks.oreIron: Color(0xFF7C7674),
+  Blocks.oreGold: Color(0xFF7F7A70),
+  Blocks.planksOak: Color(0xFF8A6E45),
+  Blocks.cobblestone: Color(0xFF6D6C6B),
+  Blocks.glass: Color(0xFFD3DBDD),
+  Blocks.brick: Color(0xFF8E4D41),
+  Blocks.sponge: Color(0xFFCEAB2A),
+  Blocks.flowerDandelion: Color(0xFF9AA42D),
+  Blocks.flowerRose: Color(0xFF6F572C),
+  Blocks.mushroomBrown: Color(0xFF916942),
+  Blocks.mushroomRed: Color(0xFFB74739),
+  Blocks.lava: Color(0xFFD73B05),
+  Blocks.tnt: Color(0xFF9D493C),
+  Blocks.sapling: Color(0xFF53682D),
+  Blocks.goldBlock: Color(0xFFD8A82D),
+  Blocks.ironBlock: Color(0xFFADB4B7),
+  Blocks.clothWhite: Color(0xFFDFDBCD),
+  Blocks.clothRed: Color(0xFFAD3533),
+  Blocks.clothOrange: Color(0xFFCF6B2A),
+  Blocks.clothYellow: Color(0xFFDABB34),
+  Blocks.clothLime: Color(0xFF5FA037),
+  Blocks.clothBlue: Color(0xFF365EA9),
+};
+
+/// Pure palette lookup for a validated atlas variant.
+Map<int, Color> blockColorsFor(AtlasVariant variant) => switch (variant) {
+  AtlasVariant.alpha => kAlphaBlockColors,
+  AtlasVariant.legacy => kLegacyBlockColors,
+};
+
+/// Flat swatches for the compile-time selected atlas.
+final Map<int, Color> kBlockColors = blockColorsFor(selectedAtlas.variant);
+
 /// Swatch color for [blockId], falling back to neutral gray.
-Color blockColor(int blockId) =>
-    kBlockColors[blockId] ?? const Color(0xFF9E9E9E);
+Color blockColor(int blockId, {AtlasVariant? variant}) =>
+    (variant == null ? kBlockColors : blockColorsFor(variant))[blockId] ??
+    const Color(0xFF9E9E9E);
 
 /// Human-readable label for [blockId] ('stone', 'planks oak', ...).
 String blockLabel(int blockId) {

@@ -15,6 +15,16 @@ fvm flutter run -d macos
 fvm flutter run -d chrome
 ```
 
+The Alpha-like atlas is the default. To run with the immutable legacy atlas,
+pass the compile-time selector explicitly:
+
+```sh
+fvm flutter run -d macos --dart-define=MINEDART_ATLAS=legacy
+```
+
+The only accepted values are `alpha` and `legacy`; invalid values fail before
+the texture asset is loaded and never fall back silently.
+
 Main controls:
 
 - WASD + Space: move and jump; double-tap and hold W to sprint.

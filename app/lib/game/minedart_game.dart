@@ -11,6 +11,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show KeyEventResult;
 import 'package:minedart_core/minedart_core.dart';
 
+import '../assets/atlas_selection.dart';
 import '../audio/audio.dart';
 import '../input/browser_pointer_lock.dart';
 import '../input/double_tap_sprint_detector.dart';
@@ -314,7 +315,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       ..resetRotation()
       ..rotate(_yaw, _pitch);
     images.prefix = 'assets/';
-    final atlas = await images.loadTexture('textures/atlas.png');
+    final atlas = await images.loadTexture(selectedAtlas.assetPath);
     // Web uses a compact WGSL cutout material; macOS keeps fog support.
     final Material material;
     if (kIsWeb) {
