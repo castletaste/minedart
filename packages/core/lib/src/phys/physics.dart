@@ -41,6 +41,7 @@ final class PhysicsSim {
   static const double _liquidAcceleration = 18;
   static const double _liquidSpeed = 2.2;
   static const double _liquidVerticalSpeed = 3.4;
+  static const double _liquidExitVelocity = 6;
   static const double _liquidBuoyancy = 6;
   static const double _liquidGravity = 8;
 
@@ -153,8 +154,14 @@ final class PhysicsSim {
     _jumpWasDown = input.jump;
 
     body.onGround = false;
-    _moveX(world, body, body.velocity.x * dt);
-    _moveZ(world, body, body.velocity.z * dt);
+    final collidedX = _moveX(world, body, body.velocity.x * dt);
+    final collidedZ = _moveZ(world, body, body.velocity.z * dt);
+    if (inLiquid && input.jump && (collidedX || collidedZ)) {
+      // Alpha gives swimmers a short upward boost while they push into a
+      // bank. Without it, leaving the 8/9-high surface does not retain enough
+      // vertical speed to clear the neighboring one-block ledge.
+      body.velocity.y = math.max(body.velocity.y, _liquidExitVelocity);
+    }
     _moveY(world, body, body.velocity.y * dt);
   }
 
@@ -193,8 +200,8 @@ final class PhysicsSim {
     return current;
   }
 
-  void _moveX(VoxelWorld world, PlayerBody body, double delta) {
-    if (delta == 0) return;
+  bool _moveX(VoxelWorld world, PlayerBody body, double delta) {
+    if (delta == 0) return false;
     body.writeAabb(_bodyBounds);
     var allowed = delta;
     final minY = (_bodyBounds.minY + collisionEpsilon).floor();
@@ -233,11 +240,13 @@ final class PhysicsSim {
     }
 
     body.position.x += allowed;
-    if (allowed != delta) body.velocity.x = 0;
+    final collided = allowed != delta;
+    if (collided) body.velocity.x = 0;
+    return collided;
   }
 
-  void _moveZ(VoxelWorld world, PlayerBody body, double delta) {
-    if (delta == 0) return;
+  bool _moveZ(VoxelWorld world, PlayerBody body, double delta) {
+    if (delta == 0) return false;
     body.writeAabb(_bodyBounds);
     var allowed = delta;
     final minX = (_bodyBounds.minX + collisionEpsilon).floor();
@@ -276,7 +285,9 @@ final class PhysicsSim {
     }
 
     body.position.z += allowed;
-    if (allowed != delta) body.velocity.z = 0;
+    final collided = allowed != delta;
+    if (collided) body.velocity.z = 0;
+    return collided;
   }
 
   void _moveY(VoxelWorld world, PlayerBody body, double delta) {

@@ -105,6 +105,41 @@ void main() {
     expect(_heightAt(top, 8, 8), lessThan(9));
   });
 
+  test('stacked falling-liquid side faces meet without vertical gaps', () {
+    final world = VoxelWorld();
+    for (var y = 8; y <= 10; y++) {
+      world.setBlock(8, y, 8, LiquidState.pack(Blocks.water, 0, falling: true));
+    }
+
+    final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+    final sides = <List<_MeshVertex>>[
+      for (var y = 8; y <= 10; y++)
+        _axisQuad(
+          mesh.translucentVertices,
+          normalX: -1,
+          normalY: 0,
+          normalZ: 0,
+          matches: (quad) =>
+              quad.every((vertex) => vertex.x == 8) &&
+              quad.map((vertex) => vertex.y).reduce(_min) == y &&
+              quad.map((vertex) => vertex.z).reduce(_min) == 8 &&
+              quad.map((vertex) => vertex.z).reduce(_max) == 9,
+        ),
+    ];
+
+    for (var index = 0; index < sides.length - 1; index++) {
+      final lowerTop = sides[index].map((vertex) => vertex.y).reduce(_max);
+      final upperBottom = sides[index + 1]
+          .map((vertex) => vertex.y)
+          .reduce(_min);
+      expect(lowerTop, upperBottom, reason: 'boundary ${index + 9}');
+    }
+    expect(
+      sides.last.map((vertex) => vertex.y).reduce(_max),
+      closeTo(10 + (11 * 8 / 9) / 14, 1e-6),
+    );
+  });
+
   test('liquid side tops match corners and UVs retain texel scale', () {
     final world = VoxelWorld()
       ..setBlock(8, 8, 8, LiquidState.pack(Blocks.water, 4))

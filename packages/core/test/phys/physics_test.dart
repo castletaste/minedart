@@ -324,6 +324,67 @@ void main() {
       expect(swimmingBody.position.y, greaterThan(1.01));
     });
 
+    test('holding jump while pushing into a bank exits liquid onto land', () {
+      for (final liquidId in <int>[Blocks.water, Blocks.lava]) {
+        final world = VoxelWorld();
+        _fillFloor(world);
+        for (var x = 5; x <= 8; x++) {
+          for (var z = 7; z <= 9; z++) {
+            world.setBlock(x, 1, z, LiquidState.pack(liquidId, 0));
+          }
+        }
+        for (var x = 9; x < 16; x++) {
+          for (var z = 7; z <= 9; z++) {
+            world.setBlock(x, 1, z, Blocks.stone);
+          }
+        }
+        final body = PlayerBody(position: Vector3(8.5, 1.0001, 8.5));
+        final sim = PhysicsSim();
+
+        var exited = false;
+        for (var tick = 0; tick < 180; tick++) {
+          sim.advance(
+            world,
+            body,
+            const PlayerInput(moveX: 1, jump: true),
+            PhysicsSim.fixedDt,
+          );
+          if (body.position.x > 9.3 && body.position.y >= 2) {
+            exited = true;
+            break;
+          }
+        }
+        _ticks(sim, world, body, 120);
+
+        expect(exited, isTrue, reason: 'liquid=$liquidId');
+        expect(body.position.x, greaterThan(9.3), reason: 'liquid=$liquidId');
+        expect(body.position.y, closeTo(2.0001, 2e-4));
+        expect(body.onGround, isTrue);
+      }
+    });
+
+    test('a bank does not boost a swimmer who is not holding jump', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      for (var x = 5; x <= 8; x++) {
+        for (var z = 7; z <= 9; z++) {
+          world.setBlock(x, 1, z, Blocks.water);
+        }
+      }
+      for (var x = 9; x < 16; x++) {
+        for (var z = 7; z <= 9; z++) {
+          world.setBlock(x, 1, z, Blocks.stone);
+        }
+      }
+      final body = PlayerBody(position: Vector3(8.5, 1.0001, 8.5));
+
+      _ticks(PhysicsSim(), world, body, 180, const PlayerInput(moveX: 1));
+
+      expect(body.position.x, lessThan(9));
+      expect(body.position.y, closeTo(1.0001, 2e-4));
+      expect(body.onGround, isTrue);
+    });
+
     test('sprint reaches 5.6 blocks per second versus 4.3 walking', () {
       final world = VoxelWorld();
       _fillFloor(world);
