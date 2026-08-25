@@ -77,6 +77,7 @@ final class ControlsHint extends StatelessWidget {
       spokenKeys: 'Double tap W',
     ),
     ControlsHintEntry(keys: 'Space', action: 'Jump', spokenKeys: 'Space'),
+    ControlsHintEntry(keys: 'N', action: 'Noclip', spokenKeys: 'N'),
     ControlsHintEntry(
       keys: 'LMB',
       action: 'Break',
