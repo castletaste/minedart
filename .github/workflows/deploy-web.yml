@@ -6,37 +6,39 @@ on:
       - main
   workflow_dispatch:
 
-permissions:
-  contents: read
-  deployments: write
+permissions: {}
 
 concurrency:
   group: minedart-cloudflare-pages-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Build and deploy Wasm release
+  build:
+    name: Verify and build Wasm
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment:
-      name: production
-      url: https://minedart.castletaste.dev
-    defaults:
-      run:
-        working-directory: app
+    permissions:
+      contents: read
 
     steps:
       - name: Check out repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Set up Flutter
+      - name: Set up Flutter 3.44.9
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.44.4
-          cache: true
-          pub-cache: true
+          flutter-version: 3.44.9
+          cache: false
+          pub-cache: false
+
+      - name: Report toolchain
+        run: |
+          flutter --version
+          dart --version
 
       - name: Resolve core dependencies
         working-directory: packages/core
@@ -70,22 +72,62 @@ jobs:
         working-directory: third_party/flame_3d
         run: flutter test --platform chrome --dart-define=FLAME_3D_WEBGPU_BIND_CACHE=false test/graphics/backend/web_gpu/cache_policy_define_off_chrome_test.dart
 
-      - name: Resolve locked dependencies
+      - name: Resolve locked app dependencies
+        working-directory: app
         run: flutter pub get --enforce-lockfile
 
-      - name: Analyze
+      - name: Analyze app
+        working-directory: app
         run: flutter analyze
 
-      - name: Test
+      - name: Test app
+        working-directory: app
         run: flutter test
 
       - name: Build and verify Wasm release
+        working-directory: app
         run: bash tool/build_web_release.sh
 
+      - name: Upload verified web bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: minedart-web-${{ github.sha }}
+          path: app/build/web
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 1
+
+  deploy:
+    name: Deploy verified bundle
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://minedart.castletaste.dev
+    permissions:
+      actions: read
+      contents: read
+      deployments: write
+
+    steps:
+      - name: Download verified web bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: minedart-web-${{ github.sha }}
+          path: app/build/web
+
       - name: Deploy to Cloudflare Pages
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
+        uses: cloudflare/wrangler-action@ebbaa1584979971c8614a24965b4405ff95890e0 # v4.0.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy app/build/web --project-name=castletaste-minedart --branch=main
+          packageManager: npm
+          wranglerVersion: 4.125.0
+          command: >-
+            pages deploy app/build/web
+            --project-name=castletaste-minedart
+            --branch=main
+            --commit-hash=${{ github.sha }}
+            --commit-dirty=false
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
