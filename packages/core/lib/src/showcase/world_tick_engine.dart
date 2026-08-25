@@ -707,6 +707,7 @@ final class WorldTickEngine {
   }
 
   bool _hasSpongeNearby(VoxelWorld world, int x, int y, int z) {
+    if (_activeSponges.isEmpty) return false;
     for (var dy = -spongeRadius; dy <= spongeRadius; dy++) {
       for (var dz = -spongeRadius; dz <= spongeRadius; dz++) {
         for (var dx = -spongeRadius; dx <= spongeRadius; dx++) {
@@ -1059,7 +1060,7 @@ final class WorldTickEngine {
       (a.dueTick == b.dueTick && a.sequence < b.sequence);
 
   static int _scheduleIdentity(int key, int expectedLiquidId) =>
-      (key << _identityBits) | expectedLiquidId;
+      key * _identityStride + expectedLiquidId;
 
   static int _fluidDelay(int id) =>
       id == Blocks.lava ? _lavaDelayTicks : _waterDelayTicks;
@@ -1078,11 +1079,25 @@ final class WorldTickEngine {
     hash ^= (y * 0x85EBCA6B) & _uint32Mask;
     hash ^= (z * 0xC2B2AE35) & _uint32Mask;
     hash ^= hash >>> 16;
-    hash = (hash * 0x7FEB352D) & _uint32Mask;
+    hash = _multiplyUint32(hash, 0x7FEB352D);
     hash ^= hash >>> 15;
     // Advancing due ticks rotate the low two bits, guaranteeing eventual
     // progress while retaining one keyed outcome in four.
     return ((hash + dueTick ~/ _lavaDelayTicks) & 3) == 0;
+  }
+
+  /// Exact low 32 bits of a product on both VM/Wasm and dart2js.
+  ///
+  /// Splitting into 16-bit limbs keeps every intermediate below JavaScript's
+  /// exact-integer limit instead of relying on a ~64-bit double product.
+  static int _multiplyUint32(int left, int right) {
+    final leftLow = left & 0xFFFF;
+    final rightLow = right & 0xFFFF;
+    final low = leftLow * rightLow;
+    final middle =
+        (((left >>> 16) * rightLow + leftLow * (right >>> 16)) & 0xFFFF) *
+        0x10000;
+    return ((low + middle) & _uint32Mask) >>> 0;
   }
 
   static BlockBehavior _behaviorAt(VoxelWorld world, int x, int y, int z) {
@@ -1175,7 +1190,7 @@ const int _noFlowCost = 1000;
 const int _maxWorkPerTick = 256;
 const int _retryChunksPerTick = 4;
 const int _bitsPerRetryWord = 32;
-const int _identityBits = 12;
+const int _identityStride = 1 << 12;
 const int _genericIdentity = 0;
 const int _uint32Mask = 0xFFFFFFFF;
 const int _worldChunkCount =

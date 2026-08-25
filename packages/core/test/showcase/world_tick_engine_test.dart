@@ -775,6 +775,33 @@ void main() {
     }
   });
 
+  test('scheduler identity is unique across a sixteen-block Y stride', () {
+    final world = VoxelWorld()
+      ..setBlock(10, 0, 10, Blocks.stone)
+      ..setBlock(10, 1, 10, Blocks.water)
+      ..setBlock(10, 16, 10, Blocks.stone)
+      ..setBlock(10, 17, 10, Blocks.water);
+    final engine = WorldTickEngine();
+
+    expect(engine.prime(world), 2);
+    expect(engine.pendingCount, 2);
+  });
+
+  test('keyed lava retry cadence is portable across VM and dart2js', () {
+    final world = _lavaIncreaseFixture(seed: 0);
+    final engine = WorldTickEngine()..enqueue(80, 1, 80);
+    final cadence = <int>[];
+
+    for (var tick = 1; tick <= 120; tick++) {
+      engine.tick(world, 256);
+      if (tick % 30 == 0) {
+        cadence.add(Blocks.meta(world.blockAt(80, 1, 80)));
+      }
+    }
+
+    expect(cadence, <int>[1, 1, 2, 2]);
+  });
+
   test('keyed lava defer is deterministic and load prime reconverges', () {
     int? delayedSeed;
     final probe = _lavaIncreaseFixture(seed: 0);
