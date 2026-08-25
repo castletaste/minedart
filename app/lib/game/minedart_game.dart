@@ -180,6 +180,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   final Stopwatch _meshCaptureStopwatch = Stopwatch();
   final Stopwatch _meshApplyStopwatch = Stopwatch();
   double _worldTickAccumulator = 0;
+  bool _suppressPrimedTickHistory = false;
   static const double _worldTickStep = 0.05;
   static const int _worldTickBudget = 256;
 
@@ -261,7 +262,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         : Blocks.id(voxelWorld.blockAt(hit.x, hit.y, hit.z));
     if (hit != null && brokenBlockId == Blocks.tnt) {
       if (worldTicks.activateTnt(voxelWorld, hit.x, hit.y, hit.z)) {
-        editHistory.beginGroup();
+        _beginUserCascade();
         hud.recordAction('tnt fuse ${hit.x}/${hit.y}/${hit.z}');
         unawaited(
           audio.play(
@@ -381,6 +382,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       _mouseLook.start();
     }
     _browserMouseSub = _browserPointerLock.events.listen(_onMouseEvent);
+    worldTicks.prime(voxelWorld);
+    _suppressPrimedTickHistory = !worldTicks.isIdle;
     _updateChunkView(force: true);
   }
 
@@ -801,11 +804,19 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   void _recordUserEdit(WorldChangeSet? changes) {
     if (changes == null || changes.isEmpty) return;
-    editHistory.beginGroup();
+    _beginUserCascade();
     editHistory.record(changes);
     for (final change in changes.changes) {
       worldTicks.enqueueAround(change.x, change.y, change.z);
     }
+  }
+
+  void _beginUserCascade() {
+    // A user edit becomes the new history boundary even if bounded load
+    // reconvergence is still pending. Its consequences then remain undoable
+    // as one cascade instead of leaving the edited topology half-recorded.
+    _suppressPrimedTickHistory = false;
+    editHistory.beginGroup();
   }
 
   void _updateWorldSimulation(double dt) {
@@ -816,7 +827,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       steps++;
       final changes = worldTicks.tick(voxelWorld, _worldTickBudget);
       if (changes.isNotEmpty) {
-        editHistory.record(changes);
+        if (!_suppressPrimedTickHistory) editHistory.record(changes);
         remeshDirty(changes.dirtyChunks);
         var removed = 0;
         var exploded = false;
@@ -840,18 +851,23 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
           unawaited(audio.play(AudioCue.explosion, seed: removed));
         }
       }
-      if (worldTicks.isIdle) editHistory.endGroup();
+      if (worldTicks.isIdle) {
+        _suppressPrimedTickHistory = false;
+        editHistory.endGroup();
+      }
     }
   }
 
   void _undoWorldEdit() {
     worldTicks.clear();
+    _suppressPrimedTickHistory = false;
     final changes = editHistory.undo(voxelWorld);
     _applyHistoryResult(changes, 'undo');
   }
 
   void _redoWorldEdit() {
     worldTicks.clear();
+    _suppressPrimedTickHistory = false;
     final changes = editHistory.redo(voxelWorld);
     _applyHistoryResult(changes, 'redo');
   }
