@@ -57,6 +57,36 @@ void main() {
   });
 
   group('AudioCue', () {
+    test(
+      'explosion cue requires TNT rather than a large liquid retraction',
+      () {
+        final waterRetraction = <WorldChange>[
+          for (var x = 0; x < 32; x++)
+            WorldChange(
+              x: x,
+              y: 1,
+              z: 0,
+              oldRaw: LiquidState.pack(Blocks.water, x & 7),
+              newRaw: Blocks.air,
+            ),
+        ];
+        expect(shouldPlayExplosionForWorldChanges(waterRetraction), isFalse);
+        expect(
+          shouldPlayExplosionForWorldChanges(<WorldChange>[
+            ...waterRetraction,
+            const WorldChange(
+              x: 40,
+              y: 1,
+              z: 0,
+              oldRaw: Blocks.tnt,
+              newRaw: Blocks.air,
+            ),
+          ]),
+          isTrue,
+        );
+      },
+    );
+
     test('maps stable block materials to break/place/step cues', () {
       expect(
         AudioCue.forBlock(Blocks.stone, BlockAudioAction.breakBlock),

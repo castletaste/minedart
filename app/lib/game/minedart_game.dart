@@ -829,13 +829,10 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       if (changes.isNotEmpty) {
         if (!_suppressPrimedTickHistory) editHistory.record(changes);
         remeshDirty(changes.dirtyChunks);
+        final exploded = shouldPlayExplosionForWorldChanges(changes.changes);
         var removed = 0;
-        var exploded = false;
         for (final change in changes.changes) {
           final oldId = Blocks.id(change.oldRaw);
-          if (oldId == Blocks.tnt && Blocks.id(change.newRaw) == Blocks.air) {
-            exploded = true;
-          }
           if (oldId != Blocks.air && Blocks.id(change.newRaw) == Blocks.air) {
             removed++;
             particlePool.emitBlock(
@@ -847,7 +844,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
             );
           }
         }
-        if (exploded || removed >= 6) {
+        if (exploded) {
           unawaited(audio.play(AudioCue.explosion, seed: removed));
         }
       }

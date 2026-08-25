@@ -3,6 +3,20 @@ import 'package:minedart_core/minedart_core.dart';
 /// The kind of block interaction that can emit a material sound.
 enum BlockAudioAction { breakBlock, placeBlock, step }
 
+/// True only when a simulation change set contains an actual TNT detonation.
+///
+/// Retraction of a large liquid flow can remove many voxels in one tick, but
+/// voxel count alone is not evidence of an explosion.
+bool shouldPlayExplosionForWorldChanges(Iterable<WorldChange> changes) {
+  for (final change in changes) {
+    if (Blocks.id(change.oldRaw) == Blocks.tnt &&
+        Blocks.id(change.newRaw) == Blocks.air) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /// Classic-inspired procedural cues. Material interactions deliberately share
 /// a bank of short samples, as Classic used its step sounds for breaking too.
 enum AudioCue {
