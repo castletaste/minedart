@@ -110,7 +110,7 @@ void main() {
 
       final slot = find.byKey(HotbarKeys.slot(2));
       final node = tester.getSemantics(slot);
-      expect(node.label, 'Hotbar slot 3: grass');
+      expect(node.label, 'Hotbar slot 3: dirt');
       expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
 
       final click = await tester.startGesture(
