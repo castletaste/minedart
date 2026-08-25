@@ -44,6 +44,7 @@ void main() {
   _cloth(atlas, 33, 0xFFE5CF42, random);
   _cloth(atlas, 34, 0xFF74B83D, random);
   _cloth(atlas, 35, 0xFF395FAF, random);
+  _obsidian(atlas, 36);
 
   encodePngFile('assets/textures/atlas.png', atlas, level: 9);
 }
@@ -384,6 +385,100 @@ void _cloth(Image atlas, int index, int color, Random random) {
     );
   });
 }
+
+void _obsidian(Image atlas, int index) {
+  const shardCenters = <(int, int)>[
+    (1, 2),
+    (7, 0),
+    (12, 4),
+    (15, 9),
+    (10, 13),
+    (3, 12),
+  ];
+  const shardBias = <int>[-4, 3, -1, 5, -3, 1];
+  final originX = (index & 15) * _tileSize;
+  final originY = (index >> 4) * _tileSize;
+
+  _tile(atlas, index, (x, y) {
+    final localX = x - originX;
+    final localY = y - originY;
+    var nearest = 0x7fffffff;
+    var secondNearest = 0x7fffffff;
+    var shard = 0;
+    for (var shardIndex = 0; shardIndex < shardCenters.length; shardIndex++) {
+      final center = shardCenters[shardIndex];
+      final rawDx = (localX - center.$1).abs();
+      final rawDy = (localY - center.$2).abs();
+      final dx = rawDx > _tileSize ~/ 2 ? _tileSize - rawDx : rawDx;
+      final dy = rawDy > _tileSize ~/ 2 ? _tileSize - rawDy : rawDy;
+      final distance = dx * dx + dy * dy;
+      if (distance < nearest) {
+        secondNearest = nearest;
+        nearest = distance;
+        shard = shardIndex;
+      } else if (distance < secondNearest) {
+        secondNearest = distance;
+      }
+    }
+
+    final coarse = _obsidianNoise(localX ~/ 2, localY ~/ 2, 0x0b51d1a, 4);
+    final boundary = secondNearest - nearest <= 5;
+    final highlight =
+        !boundary &&
+        nearest <= 2 &&
+        _obsidianHash(localX, localY, 0x0b5170d) % 5 == 0;
+    final bodyTone = shardBias[shard] + coarse;
+    final red = highlight
+        ? 63 + coarse
+        : (boundary ? 46 + coarse : 35 + bodyTone);
+    final green = highlight
+        ? 47 + coarse
+        : (boundary ? 34 + coarse : 29 + bodyTone);
+    final blue = highlight
+        ? 83 + coarse
+        : (boundary ? 66 + coarse : 48 + bodyTone);
+    atlas.setPixelRgba(
+      x,
+      y,
+      red.clamp(0, 255),
+      green.clamp(0, 255),
+      blue.clamp(0, 255),
+      255,
+    );
+  });
+  for (var y = 0; y < _tileSize; y++) {
+    final edge = atlas.getPixel(originX, originY + y);
+    atlas.setPixelRgba(
+      originX + _tileSize - 1,
+      originY + y,
+      edge.r.toInt(),
+      edge.g.toInt(),
+      edge.b.toInt(),
+      255,
+    );
+  }
+  for (var x = 0; x < _tileSize; x++) {
+    final edge = atlas.getPixel(originX + x, originY);
+    atlas.setPixelRgba(
+      originX + x,
+      originY + _tileSize - 1,
+      edge.r.toInt(),
+      edge.g.toInt(),
+      edge.b.toInt(),
+      255,
+    );
+  }
+}
+
+int _obsidianHash(int x, int y, int seed) {
+  var value = seed ^ (x * 0x45d9f3b) ^ (y * 0x119de1f3);
+  value = (value ^ (value >> 16)) * 0x45d9f3b;
+  value ^= value >> 16;
+  return value & 0x7fffffff;
+}
+
+int _obsidianNoise(int x, int y, int seed, int amplitude) =>
+    _obsidianHash(x, y, seed) % (amplitude * 2 + 1) - amplitude;
 
 void _frame(Image atlas, int index, int color) {
   final ox = (index & 15) * _tileSize;

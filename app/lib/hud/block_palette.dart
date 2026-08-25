@@ -57,6 +57,7 @@ const Map<int, Color> kLegacyBlockColors = <int, Color>{
   Blocks.clothYellow: Color(0xFFE5CF42),
   Blocks.clothLime: Color(0xFF74B83D),
   Blocks.clothBlue: Color(0xFF395FAF),
+  Blocks.obsidian: Color(0xFF271F36),
 };
 
 /// Flat swatches generated from the completed Alpha-like atlas masters.
@@ -97,6 +98,7 @@ const Map<int, Color> kAlphaBlockColors = <int, Color>{
   Blocks.clothYellow: Color(0xFFDABB34),
   Blocks.clothLime: Color(0xFF5FA037),
   Blocks.clothBlue: Color(0xFF365EA9),
+  Blocks.obsidian: Color(0xFF292235),
 };
 
 /// Pure palette lookup for a validated atlas variant.

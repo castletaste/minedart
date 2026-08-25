@@ -40,6 +40,7 @@ const Map<int, Color> _expectedLegacyColors = <int, Color>{
   Blocks.clothYellow: Color(0xFFE5CF42),
   Blocks.clothLime: Color(0xFF74B83D),
   Blocks.clothBlue: Color(0xFF395FAF),
+  Blocks.obsidian: Color(0xFF271F36),
 };
 
 const Map<int, String> _alphaMasterForBlock = <int, String>{
@@ -75,6 +76,7 @@ const Map<int, String> _alphaMasterForBlock = <int, String>{
   Blocks.clothYellow: '33-cloth-yellow.png',
   Blocks.clothLime: '34-cloth-lime.png',
   Blocks.clothBlue: '35-cloth-blue.png',
+  Blocks.obsidian: '36-obsidian.png',
 };
 
 void main() {
@@ -88,6 +90,17 @@ void main() {
     for (final entry in _expectedLegacyColors.entries) {
       expect(blockColor(entry.key, variant: AtlasVariant.legacy), entry.value);
     }
+  });
+
+  test('legacy obsidian swatch is the additive tile mean', () {
+    final atlas = img.decodePng(
+      File('assets/textures/atlas.png').readAsBytesSync(),
+    );
+    expect(atlas, isNotNull);
+    expect(
+      kLegacyBlockColors[Blocks.obsidian],
+      _alphaWeightedMeanRegion(atlas!, 64, 32, 16, 16),
+    );
   });
 
   test('Alpha-like swatches are deterministic master means', () {
@@ -124,16 +137,29 @@ void main() {
 }
 
 Color _alphaWeightedMean(img.Image image) {
+  return _alphaWeightedMeanRegion(image, 0, 0, image.width, image.height);
+}
+
+Color _alphaWeightedMeanRegion(
+  img.Image image,
+  int originX,
+  int originY,
+  int width,
+  int height,
+) {
   var alphaTotal = 0;
   var redTotal = 0;
   var greenTotal = 0;
   var blueTotal = 0;
-  for (final pixel in image) {
-    final alpha = pixel.a.toInt();
-    alphaTotal += alpha;
-    redTotal += pixel.r.toInt() * alpha;
-    greenTotal += pixel.g.toInt() * alpha;
-    blueTotal += pixel.b.toInt() * alpha;
+  for (var y = originY; y < originY + height; y++) {
+    for (var x = originX; x < originX + width; x++) {
+      final pixel = image.getPixel(x, y);
+      final alpha = pixel.a.toInt();
+      alphaTotal += alpha;
+      redTotal += pixel.r.toInt() * alpha;
+      greenTotal += pixel.g.toInt() * alpha;
+      blueTotal += pixel.b.toInt() * alpha;
+    }
   }
   if (alphaTotal == 0) {
     throw StateError('Cannot derive a swatch from a transparent master.');

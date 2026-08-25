@@ -14,9 +14,21 @@ const _provenancePath = '$_sourceRoot/atlas.provenance.json';
 const _mastersPath = '$_sourceRoot/masters';
 const _sourceSha256 =
     '390534263eca3f5becc510146361402f085ecdb65acad94617e77b7ad13c7c02';
+const _alphaGeneratorSha256 =
+    '8f69a725c4509618e44b5a01a367084bec24a65f925f529204618d8f5f40e4bd';
+const _alphaAtlasSha256 =
+    '8c0cef872058be2fb350a0a6b1c695bbe37b383a7bb75c820f913729681dedd8';
+const _alphaObsidianMasterSha256 =
+    '7f49eaa65edc04b6fd065edacf9cfb202b7e58002f94b66a234ff460d3cc2fb5';
 const _legacyGeneratorSha256 =
-    'd685041766bb869f336028575037778bbd8fd75a04cccf893b74f6d3fa7d4134';
+    '3d254dd2905016b980b8005781de6319ce9cfacac648dd1bc8d7d05622db60fc';
 const _legacyAtlasSha256 =
+    'af0edc90fd8bdd8c587fdbb828da5fe110fb583557c0555429db9ab317fd776f';
+const _preObsidianAlphaAtlasSha256 =
+    'a0d4fdb791319ad28d729e79e1a70ff20b92c9e4b1ed4664b60250b43a7b917d';
+const _preObsidianLegacyGeneratorSha256 =
+    'd685041766bb869f336028575037778bbd8fd75a04cccf893b74f6d3fa7d4134';
+const _preObsidianLegacyAtlasSha256 =
     '5bed18299c2bb9eb14c6e8caedf9c261ff43bb402484f4d65c0ba2c1f4c624ad';
 
 const _masterNames = <String>[
@@ -56,6 +68,7 @@ const _masterNames = <String>[
   '33-cloth-yellow.png',
   '34-cloth-lime.png',
   '35-cloth-blue.png',
+  '36-obsidian.png',
 ];
 
 void main() {
@@ -197,7 +210,7 @@ void main() {
     expect(generatorSource, isNot(contains("'floor(sum / sampleCount)'")));
   });
 
-  test('masters are exactly indices 0 through 35 and match atlas tiles', () {
+  test('masters are exactly indices 0 through 36 and match atlas tiles', () {
     final files =
         Directory(_mastersPath)
             .listSync()
@@ -227,8 +240,8 @@ void main() {
     }
   });
 
-  test('unused tile slots 36 through 255 are transparent zero RGBA', () {
-    for (var index = 36; index < 256; index++) {
+  test('unused tile slots 37 through 255 are transparent zero RGBA', () {
+    for (var index = 37; index < 256; index++) {
       final originX = (index & 15) * 16;
       final originY = (index >> 4) * 16;
       for (var y = 0; y < 16; y++) {
@@ -245,7 +258,7 @@ void main() {
 
   test('alpha categories and transparent RGB bleed are exact', () {
     const cutouts = <int>{8, 16, 19, 20, 21, 22, 27};
-    for (var index = 0; index < 36; index++) {
+    for (var index = 0; index < _masterNames.length; index++) {
       final master = _decode('$_mastersPath/${_masterNames[index]}');
       final alphas = <int>{};
       for (final pixel in master) {
@@ -308,6 +321,58 @@ void main() {
     );
   });
 
+  test('obsidian is original, opaque, coarse, and edge-safe', () {
+    final obsidian = _decode('$_mastersPath/36-obsidian.png');
+    final colors = <(int, int, int)>{};
+    final borderColors = <(int, int, int)>{};
+    var maxWrappedJump = 0;
+    for (var y = 0; y < 16; y++) {
+      for (var x = 0; x < 16; x++) {
+        final pixel = obsidian.getPixel(x, y);
+        expect(pixel.a.toInt(), 255, reason: 'pixel ($x,$y)');
+        final rgb = (pixel.r.toInt(), pixel.g.toInt(), pixel.b.toInt());
+        colors.add(rgb);
+        if (x == 0 || x == 15 || y == 0 || y == 15) borderColors.add(rgb);
+      }
+      maxWrappedJump = _max(
+        maxWrappedJump,
+        _rgbDistance(obsidian.getPixel(0, y), obsidian.getPixel(15, y)),
+      );
+    }
+    for (var x = 0; x < 16; x++) {
+      maxWrappedJump = _max(
+        maxWrappedJump,
+        _rgbDistance(obsidian.getPixel(x, 0), obsidian.getPixel(x, 15)),
+      );
+    }
+    expect(colors.length, greaterThanOrEqualTo(12));
+    expect(borderColors.length, greaterThanOrEqualTo(6));
+    expect(
+      maxWrappedJump,
+      0,
+      reason: 'opposite edges must close exactly under nearest sampling',
+    );
+    final obsidianBytes = File(
+      '$_mastersPath/36-obsidian.png',
+    ).readAsBytesSync();
+    for (final existing in _masterNames.take(36)) {
+      expect(
+        obsidianBytes,
+        isNot(File('$_mastersPath/$existing').readAsBytesSync()),
+        reason: 'obsidian must be an original composition, not $existing',
+      );
+    }
+    expect(sha256Hex(obsidianBytes), _alphaObsidianMasterSha256);
+
+    final derivations = (provenance['derivations']! as Map)
+        .cast<String, Object?>();
+    final record = (derivations['36']! as Map).cast<String, Object?>();
+    final spec = (record['spec']! as Map).cast<String, Object?>();
+    expect(spec['algorithm'], 'original-toroidal-violet-shards-obsidian-v1');
+    expect(spec['paletteCrops'], const <String>['r0c3']);
+    expect(spec['seed'], 0x0b51d1a);
+  });
+
   test('directional face and upright image rules remain intact', () {
     expect(blockDefs[Blocks.grass]!.tiles, <int>[
       Tiles.grassSide,
@@ -354,7 +419,7 @@ void main() {
   });
 
   test(
-    'Tiles and BlockDefs use exactly the 0 through 35 face-index contract',
+    'Tiles and BlockDefs use exactly the 0 through 36 face-index contract',
     () {
       const tileConstants = <int>[
         Tiles.stone,
@@ -393,13 +458,14 @@ void main() {
         Tiles.clothYellow,
         Tiles.clothLime,
         Tiles.clothBlue,
+        Tiles.obsidian,
       ];
-      expect(tileConstants, List<int>.generate(36, (index) => index));
+      expect(tileConstants, List<int>.generate(37, (index) => index));
       final referenced = <int>{};
       for (final definition in blockDefs.whereType<BlockDef>()) {
         expect(definition.tiles, hasLength(6));
         for (final tile in definition.tiles) {
-          expect(tile, inInclusiveRange(0, 35));
+          expect(tile, inInclusiveRange(0, 36));
           referenced.add(tile);
         }
       }
@@ -427,7 +493,7 @@ void main() {
 
     final masters = (provenance['masters']! as List)
         .cast<Map<String, Object?>>();
-    expect(masters, hasLength(36));
+    expect(masters, hasLength(37));
     for (var index = 0; index < masters.length; index++) {
       final record = masters[index];
       expect(record['index'], index);
@@ -441,8 +507,9 @@ void main() {
     }
 
     final output = (provenance['output']! as Map).cast<String, Object?>();
-    expect(output['firstUnusedTile'], 36);
+    expect(output['firstUnusedTile'], 37);
     expect(output['sha256'], sha256Hex(File(_atlasPath).readAsBytesSync()));
+    expect(output['sha256'], _alphaAtlasSha256);
     expect(output['rgbaSha256'], sha256Hex(_imageRgba(atlas)));
 
     final generator = (provenance['generator']! as Map).cast<String, Object?>();
@@ -450,12 +517,13 @@ void main() {
       generator['sha256'],
       sha256Hex(File(generator['path']! as String).readAsBytesSync()),
     );
+    expect(generator['sha256'], _alphaGeneratorSha256);
 
     final derivations = (provenance['derivations']! as Map)
         .cast<String, Object?>();
     expect(
       derivations.keys.toList(),
-      List<String>.generate(36, (index) => index.toString().padLeft(2, '0')),
+      List<String>.generate(37, (index) => index.toString().padLeft(2, '0')),
     );
     for (final record in derivations.values) {
       final map = (record as Map).cast<String, Object?>();
@@ -463,17 +531,98 @@ void main() {
     }
   });
 
-  test('immutable legacy generator and atlas hashes are unchanged', () {
-    expect(
-      sha256Hex(File('bin/make_atlas.dart').readAsBytesSync()),
-      _legacyGeneratorSha256,
-    );
-    expect(
-      sha256Hex(File('assets/textures/atlas.png').readAsBytesSync()),
-      _legacyAtlasSha256,
-    );
-  });
+  test(
+    'approved obsidian extension is explicitly additive in both atlases',
+    () {
+      final extensions = (provenance['approvedExtensions']! as List)
+          .cast<Map<String, Object?>>();
+      expect(extensions, <Map<String, Object?>>[
+        <String, Object?>{
+          'blockId': Blocks.obsidian,
+          'name': 'obsidian',
+          'priorOutputSha256': _preObsidianAlphaAtlasSha256,
+          'tileIndex': Tiles.obsidian,
+        },
+      ]);
+
+      final previousAlpha = _decode(_atlasPath);
+      _clearTile(previousAlpha, Tiles.obsidian);
+      expect(
+        sha256Hex(encodePng(previousAlpha, level: 9)),
+        _preObsidianAlphaAtlasSha256,
+        reason:
+            'clearing additive tile 36 must reproduce the prior Alpha atlas',
+      );
+
+      final legacy = _decode('assets/textures/atlas.png');
+      for (var y = 0; y < 16; y++) {
+        for (var x = 0; x < 16; x++) {
+          expect(legacy.getPixel(64 + x, 32 + y).a.toInt(), 255);
+        }
+      }
+      for (var index = 37; index < 256; index++) {
+        final originX = (index & 15) * 16;
+        final originY = (index >> 4) * 16;
+        for (var y = 0; y < 16; y++) {
+          for (var x = 0; x < 16; x++) {
+            expect(
+              _rgba(legacy.getPixel(originX + x, originY + y)),
+              (0, 0, 0, 0),
+              reason: 'legacy unused tile $index pixel ($x,$y)',
+            );
+          }
+        }
+      }
+      final previousLegacy = _decode('assets/textures/atlas.png');
+      _clearTile(previousLegacy, Tiles.obsidian);
+      expect(
+        sha256Hex(encodePng(previousLegacy, level: 9)),
+        _preObsidianLegacyAtlasSha256,
+        reason:
+            'clearing additive tile 36 must reproduce the prior legacy atlas',
+      );
+
+      final legacyRecord = (provenance['legacyFallback']! as Map)
+          .cast<String, Object?>();
+      final approved = (legacyRecord['approvedExtension']! as Map)
+          .cast<String, Object?>();
+      expect(approved, <String, Object?>{
+        'block': 'obsidian',
+        'priorAtlasSha256': _preObsidianLegacyAtlasSha256,
+        'priorGeneratorSha256': _preObsidianLegacyGeneratorSha256,
+        'tileIndex': Tiles.obsidian,
+      });
+
+      expect(_legacyGeneratorSha256, isNot(_preObsidianLegacyGeneratorSha256));
+      expect(_legacyAtlasSha256, isNot(_preObsidianLegacyAtlasSha256));
+      expect(
+        sha256Hex(File('bin/make_atlas.dart').readAsBytesSync()),
+        _legacyGeneratorSha256,
+      );
+      expect(
+        sha256Hex(File('assets/textures/atlas.png').readAsBytesSync()),
+        _legacyAtlasSha256,
+      );
+    },
+  );
 }
+
+void _clearTile(Image image, int index) {
+  final originX = (index & 15) * 16;
+  final originY = (index >> 4) * 16;
+  for (var y = 0; y < 16; y++) {
+    for (var x = 0; x < 16; x++) {
+      image.setPixelRgba(originX + x, originY + y, 0, 0, 0, 0);
+    }
+  }
+}
+
+int _rgbDistance(Pixel a, Pixel b) =>
+    (a.r.toInt() - b.r.toInt()).abs() +
+    (a.g.toInt() - b.g.toInt()).abs() +
+    (a.b.toInt() - b.b.toInt()).abs();
+
+int _max(int a, int b) => a > b ? a : b;
 
 Future<void> _runGenerator() async {
   final flutterRoot = Platform.environment['FLUTTER_ROOT'];
