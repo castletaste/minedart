@@ -326,40 +326,43 @@ void main() {
 
     test('holding jump while pushing into a bank exits liquid onto land', () {
       for (final liquidId in <int>[Blocks.water, Blocks.lava]) {
-        final world = VoxelWorld();
-        _fillFloor(world);
-        for (var x = 5; x <= 8; x++) {
-          for (var z = 7; z <= 9; z++) {
-            world.setBlock(x, 1, z, LiquidState.pack(liquidId, 0));
+        for (final level in <int>[0, 4]) {
+          final world = VoxelWorld();
+          _fillFloor(world);
+          for (var x = 5; x <= 8; x++) {
+            for (var z = 7; z <= 9; z++) {
+              world.setBlock(x, 1, z, LiquidState.pack(liquidId, level));
+            }
           }
-        }
-        for (var x = 9; x < 16; x++) {
-          for (var z = 7; z <= 9; z++) {
-            world.setBlock(x, 1, z, Blocks.stone);
+          for (var x = 9; x < 16; x++) {
+            for (var z = 7; z <= 9; z++) {
+              world.setBlock(x, 1, z, Blocks.stone);
+            }
           }
-        }
-        final body = PlayerBody(position: Vector3(8.5, 1.0001, 8.5));
-        final sim = PhysicsSim();
+          final body = PlayerBody(position: Vector3(8.5, 1.0001, 8.5));
+          final sim = PhysicsSim();
 
-        var exited = false;
-        for (var tick = 0; tick < 180; tick++) {
-          sim.advance(
-            world,
-            body,
-            const PlayerInput(moveX: 1, jump: true),
-            PhysicsSim.fixedDt,
-          );
-          if (body.position.x > 9.3 && body.position.y >= 2) {
-            exited = true;
-            break;
+          var exited = false;
+          for (var tick = 0; tick < 180; tick++) {
+            sim.advance(
+              world,
+              body,
+              const PlayerInput(moveX: 1, jump: true),
+              PhysicsSim.fixedDt,
+            );
+            if (body.position.x > 9.3 && body.position.y >= 2) {
+              exited = true;
+              break;
+            }
           }
-        }
-        _ticks(sim, world, body, 120);
+          _ticks(sim, world, body, 120);
 
-        expect(exited, isTrue, reason: 'liquid=$liquidId');
-        expect(body.position.x, greaterThan(9.3), reason: 'liquid=$liquidId');
-        expect(body.position.y, closeTo(2.0001, 2e-4));
-        expect(body.onGround, isTrue);
+          final reason = 'liquid=$liquidId level=$level';
+          expect(exited, isTrue, reason: reason);
+          expect(body.position.x, greaterThan(9.3), reason: reason);
+          expect(body.position.y, closeTo(2.0001, 2e-4));
+          expect(body.onGround, isTrue);
+        }
       }
     });
 
@@ -368,7 +371,7 @@ void main() {
       _fillFloor(world);
       for (var x = 5; x <= 8; x++) {
         for (var z = 7; z <= 9; z++) {
-          world.setBlock(x, 1, z, Blocks.water);
+          world.setBlock(x, 1, z, LiquidState.pack(Blocks.water, 4));
         }
       }
       for (var x = 9; x < 16; x++) {
