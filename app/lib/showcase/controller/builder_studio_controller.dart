@@ -137,6 +137,7 @@ final class BuilderStudioController extends ChangeNotifier {
     if (catalog.isEmpty) return List<int>.filled(slotCount, Blocks.air);
     final validIds = catalog.map((entry) => entry.id).toSet();
     const preferredNames = <String>[
+      'tnt',
       'stone',
       'dirt',
       'grass',
@@ -145,7 +146,6 @@ final class BuilderStudioController extends ChangeNotifier {
       'sand',
       'log oak',
       'leaves oak',
-      'tnt',
     ];
     final preferred = <int>[
       for (final name in preferredNames)

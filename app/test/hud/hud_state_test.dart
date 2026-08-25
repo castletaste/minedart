@@ -11,7 +11,7 @@ void main() {
       final hud = HudState();
       addTearDown(hud.dispose);
       expect(hud.selectedSlot.value, 0);
-      expect(hud.selectedBlock, Blocks.stone);
+      expect(hud.selectedBlock, Blocks.tnt);
       expect(hud.slotCount, 9);
     });
 
@@ -51,7 +51,7 @@ void main() {
 
     test('every hotbar slot maps to a real placeable block', () {
       expect(kHotbarBlocks, hasLength(9));
-      expect(kHotbarBlocks.last, Blocks.tnt);
+      expect(kHotbarBlocks.first, Blocks.tnt);
       expect(kHotbarBlocks, isNot(contains(Blocks.brick)));
       for (final blockId in kHotbarBlocks) {
         expect(blockId, greaterThan(Blocks.air));
@@ -91,7 +91,7 @@ void main() {
       expect(stats.x, 10.5);
       expect(stats.y, 20.25);
       expect(stats.z, 30.125);
-      expect(stats.blockName, 'stone');
+      expect(stats.blockName, 'tnt');
       expect(stats.fps, greaterThan(0));
     });
 

@@ -31,7 +31,7 @@ void main() {
       addTearDown(controller.dispose);
 
       expect(controller.hotbar, hasLength(9));
-      expect(controller.hotbar.last, Blocks.tnt);
+      expect(controller.hotbar.first, Blocks.tnt);
       expect(controller.hotbar, isNot(contains(Blocks.brick)));
       expect(
         controller.visibleBlocks,

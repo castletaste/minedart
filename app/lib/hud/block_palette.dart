@@ -12,6 +12,7 @@ import '../assets/atlas_selection.dart';
 
 /// The nine hotbar slots, in order.
 const List<int> kHotbarBlocks = <int>[
+  Blocks.tnt,
   Blocks.stone,
   Blocks.dirt,
   Blocks.grass,
@@ -20,7 +21,6 @@ const List<int> kHotbarBlocks = <int>[
   Blocks.sand,
   Blocks.logOak,
   Blocks.leavesOak,
-  Blocks.tnt,
 ];
 
 /// Exact flat swatches used with the immutable legacy atlas.
