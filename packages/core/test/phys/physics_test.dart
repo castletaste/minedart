@@ -388,6 +388,52 @@ void main() {
       expect(body.onGround, isTrue);
     });
 
+    test('deep walls and the world border cannot become liquid elevators', () {
+      for (final atWorldBorder in <bool>[false, true]) {
+        final world = VoxelWorld();
+        _fillFloor(world);
+        final minWaterX = atWorldBorder ? 0 : 5;
+        final maxWaterX = atWorldBorder ? 3 : 8;
+        for (var y = 1; y <= 12; y++) {
+          for (var x = minWaterX; x <= maxWaterX; x++) {
+            for (var z = 7; z <= 9; z++) {
+              world.setBlock(x, y, z, Blocks.water);
+            }
+          }
+          if (!atWorldBorder) {
+            for (var z = 7; z <= 9; z++) {
+              world.setBlock(9, y, z, Blocks.stone);
+            }
+          }
+        }
+        final body = PlayerBody(
+          position: Vector3(atWorldBorder ? 0.4 : 8.5, 1.5, 8.5),
+        );
+        final sim = PhysicsSim();
+        var maximumVerticalVelocity = double.negativeInfinity;
+
+        for (var tick = 0; tick < 60; tick++) {
+          sim.advance(
+            world,
+            body,
+            PlayerInput(moveX: atWorldBorder ? -1 : 1, jump: true),
+            PhysicsSim.fixedDt,
+          );
+          maximumVerticalVelocity = math.max(
+            maximumVerticalVelocity,
+            body.velocity.y,
+          );
+        }
+
+        expect(
+          maximumVerticalVelocity,
+          lessThanOrEqualTo(3.4 + 1e-6),
+          reason: 'worldBorder=$atWorldBorder',
+        );
+        expect(body.position.y, lessThan(7));
+      }
+    });
+
     test('sprint reaches 5.6 blocks per second versus 4.3 walking', () {
       final world = VoxelWorld();
       _fillFloor(world);

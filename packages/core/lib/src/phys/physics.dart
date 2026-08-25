@@ -98,6 +98,10 @@ final class PhysicsSim {
         ? Blocks.water
         : (_liquidProbe.inLava ? Blocks.lava : Blocks.air);
     final inLiquid = liquidId != Blocks.air;
+    final atLiquidSurface =
+        inLiquid &&
+        body.position.y + PlayerBody.eyeHeight + collisionEpsilon >=
+            _liquidProbe.surfaceYFor(liquidId);
 
     var inputX = input.moveX;
     var inputZ = input.moveZ;
@@ -156,7 +160,7 @@ final class PhysicsSim {
     body.onGround = false;
     final collidedX = _moveX(world, body, body.velocity.x * dt);
     final collidedZ = _moveZ(world, body, body.velocity.z * dt);
-    if (inLiquid && input.jump && (collidedX || collidedZ)) {
+    if (atLiquidSurface && input.jump && (collidedX || collidedZ)) {
       // Alpha gives swimmers a short upward boost while they push into a
       // bank. Without it, leaving the 8/9-high surface does not retain enough
       // vertical speed to clear the neighboring one-block ledge.
@@ -376,22 +380,26 @@ final class PhysicsSim {
         for (var x = minX; x <= maxX; x++) {
           final raw = world.blockAt(x, y, z);
           final liquidId = Blocks.id(raw);
-          if (!LiquidState.isLiquidId(liquidId) ||
-              !_intersectsLiquidSurface(world, bounds, x, y, z, liquidId)) {
+          if (!LiquidState.isLiquidId(liquidId)) {
             continue;
           }
-          if (liquidId == Blocks.water) {
-            probe.inWater = true;
-          } else {
-            probe.inLava = true;
-          }
+          final surfaceY = _liquidSurfaceYOverBounds(
+            world,
+            bounds,
+            x,
+            y,
+            z,
+            liquidId,
+          );
+          if (surfaceY == null) continue;
+          probe.addSurface(liquidId, surfaceY);
           _accumulateFlow(world, x, y, z, raw, liquidId, probe);
         }
       }
     }
   }
 
-  static bool _intersectsLiquidSurface(
+  static double? _liquidSurfaceYOverBounds(
     VoxelWorld world,
     Aabb bounds,
     int x,
@@ -401,14 +409,14 @@ final class PhysicsSim {
   ) {
     if (bounds.maxY <= y + collisionEpsilon ||
         bounds.minY + collisionEpsilon >= y + 1) {
-      return false;
+      return null;
     }
 
     final minX = math.max(bounds.minX, x.toDouble());
     final maxX = math.min(bounds.maxX, x + 1.0);
     final minZ = math.max(bounds.minZ, z.toDouble());
     final maxZ = math.min(bounds.maxZ, z + 1.0);
-    if (minX >= maxX || minZ >= maxZ) return false;
+    if (minX >= maxX || minZ >= maxZ) return null;
 
     // A bilinear patch reaches its maximum over a rectangle at one of that
     // rectangle's corners. Sampling the clipped AABB corners therefore gives
@@ -434,7 +442,8 @@ final class PhysicsSim {
       maxHeight,
       _bilinearHeight(h00, h10, h01, h11, localMaxX, localMaxZ),
     );
-    return bounds.minY + collisionEpsilon < y + maxHeight;
+    final surfaceY = y + maxHeight;
+    return bounds.minY + collisionEpsilon < surfaceY ? surfaceY : null;
   }
 
   static double _cornerLiquidHeight(
@@ -566,9 +575,11 @@ final class _LiquidProbe {
   double waterFlowX = 0;
   double waterFlowY = 0;
   double waterFlowZ = 0;
+  double waterSurfaceY = double.negativeInfinity;
   double lavaFlowX = 0;
   double lavaFlowY = 0;
   double lavaFlowZ = 0;
+  double lavaSurfaceY = double.negativeInfinity;
 
   void reset() {
     inWater = false;
@@ -576,10 +587,25 @@ final class _LiquidProbe {
     waterFlowX = 0;
     waterFlowY = 0;
     waterFlowZ = 0;
+    waterSurfaceY = double.negativeInfinity;
     lavaFlowX = 0;
     lavaFlowY = 0;
     lavaFlowZ = 0;
+    lavaSurfaceY = double.negativeInfinity;
   }
+
+  void addSurface(int liquidId, double surfaceY) {
+    if (liquidId == Blocks.water) {
+      inWater = true;
+      waterSurfaceY = math.max(waterSurfaceY, surfaceY);
+    } else {
+      inLava = true;
+      lavaSurfaceY = math.max(lavaSurfaceY, surfaceY);
+    }
+  }
+
+  double surfaceYFor(int liquidId) =>
+      liquidId == Blocks.water ? waterSurfaceY : lavaSurfaceY;
 
   void addFlow(int liquidId, double x, double y, double z) {
     if (liquidId == Blocks.water) {
