@@ -38,6 +38,8 @@ final class WorldTickEngine {
   final Map<int, int> _fallCooldowns = {};
   final Map<int, int> _tntFuses = {};
   final Set<int> _activeSponges = {};
+  VoxelWorld? _spongeIndexWorld;
+  bool _spongeIndexInitialized = false;
   final Uint32List _retryWords = Uint32List(
     (_worldChunkCount + _bitsPerRetryWord - 1) ~/ _bitsPerRetryWord,
   );
@@ -87,6 +89,9 @@ final class WorldTickEngine {
   /// retry marks, so [isIdle] remains false until reconvergence. The return
   /// value is the number of active entries added by this call.
   int prime(VoxelWorld world) {
+    _activeSponges.clear();
+    _spongeIndexWorld = world;
+    _spongeIndexInitialized = false;
     final before = _scheduled.length;
     for (var chunkIndex = 0; chunkIndex < world.chunks.length; chunkIndex++) {
       final chunk = world.chunks[chunkIndex];
@@ -125,6 +130,7 @@ final class WorldTickEngine {
         );
       }
     }
+    _spongeIndexInitialized = true;
     return _scheduled.length - before;
   }
 
@@ -170,6 +176,8 @@ final class WorldTickEngine {
     _fallCooldowns.clear();
     _tntFuses.clear();
     _activeSponges.clear();
+    _spongeIndexWorld = null;
+    _spongeIndexInitialized = false;
     _retryWords.fillRange(0, _retryWords.length, 0);
     _currentTick = 0;
     _nextSequence = 0;
@@ -707,6 +715,7 @@ final class WorldTickEngine {
   }
 
   bool _hasSpongeNearby(VoxelWorld world, int x, int y, int z) {
+    _ensureSpongeIndex(world);
     if (_activeSponges.isEmpty) return false;
     for (var dy = -spongeRadius; dy <= spongeRadius; dy++) {
       for (var dz = -spongeRadius; dz <= spongeRadius; dz++) {
@@ -721,6 +730,22 @@ final class WorldTickEngine {
     return false;
   }
 
+  void _ensureSpongeIndex(VoxelWorld world) {
+    if (identical(_spongeIndexWorld, world) && _spongeIndexInitialized) return;
+    _activeSponges.clear();
+    _spongeIndexWorld = world;
+    for (final chunk in world.chunks) {
+      for (var localIndex = 0; localIndex < ChunkIndex.volume; localIndex++) {
+        if (_behaviorForRaw(chunk.blocks[localIndex]) != BlockBehavior.sponge) {
+          continue;
+        }
+        final (x, y, z) = _worldCoordinates(chunk, localIndex);
+        _activeSponges.add(worldPositionKey(x, y, z));
+      }
+    }
+    _spongeIndexInitialized = true;
+  }
+
   void _reconcileSpongeState(
     VoxelWorld world,
     int x,
@@ -729,6 +754,11 @@ final class WorldTickEngine {
     BlockBehavior currentBehavior, {
     int? previousRaw,
   }) {
+    if (!identical(_spongeIndexWorld, world)) {
+      _activeSponges.clear();
+      _spongeIndexWorld = world;
+      _spongeIndexInitialized = false;
+    }
     final key = worldPositionKey(x, y, z);
     if (currentBehavior == BlockBehavior.sponge) {
       _activeSponges.add(key);

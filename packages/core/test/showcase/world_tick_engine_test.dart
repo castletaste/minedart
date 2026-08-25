@@ -598,6 +598,32 @@ void main() {
     expect(engine.droppedUpdates, greaterThanOrEqualTo(2));
   });
 
+  test('a cold or cleared engine discovers a buried sponge index', () {
+    for (final clearFirst in <bool>[false, true]) {
+      final world = _buriedSpongeFixture();
+      final engine = WorldTickEngine(maxFluidLevel: 4);
+      if (clearFirst) {
+        engine.prime(world);
+        engine.clear();
+      }
+      engine.enqueue(15, 12, 10);
+
+      _drain(engine, world, budget: 256, maxTicks: 1000);
+
+      var waterInsideAbsorbCube = 0;
+      for (var y = 8; y <= 12; y++) {
+        for (var z = 8; z <= 12; z++) {
+          for (var x = 10; x <= 14; x++) {
+            if (Blocks.id(world.blockAt(x, y, z)) == Blocks.water) {
+              waterInsideAbsorbCube++;
+            }
+          }
+        }
+      }
+      expect(waterInsideAbsorbCube, 0, reason: 'clearFirst=$clearFirst');
+    }
+  });
+
   test('TNT fuse is grouped and radius-three explosion preserves specials', () {
     final world = VoxelWorld()
       ..setBlock(30, 10, 30, Blocks.tnt)
@@ -904,6 +930,18 @@ VoxelWorld _lavaIncreaseFixture({required int seed}) {
     ..setBlock(80, 1, 81, Blocks.stone)
     ..setBlock(81, 1, 80, Blocks.stone);
   return world;
+}
+
+VoxelWorld _buriedSpongeFixture() {
+  final world = VoxelWorld();
+  for (var x = 8; x <= 18; x++) {
+    for (var z = 6; z <= 14; z++) {
+      world.setBlock(x, 11, z, Blocks.stone);
+    }
+  }
+  return world
+    ..setBlock(12, 10, 10, Blocks.sponge)
+    ..setBlock(15, 12, 10, Blocks.water);
 }
 
 void _fillFloor(
