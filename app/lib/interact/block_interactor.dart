@@ -48,7 +48,7 @@ const double kDefaultReach = 5;
 /// True when a placement may overwrite the block currently in a cell.
 bool isReplaceable(int raw) {
   final id = Blocks.id(raw);
-  return id == Blocks.air || id == Blocks.water;
+  return id == Blocks.air || id == Blocks.water || id == Blocks.lava;
 }
 
 /// Fills [out] with the player collision box derived from an eye position.

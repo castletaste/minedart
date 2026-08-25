@@ -34,6 +34,35 @@ void main() {
     expect(decoded.toVoxelWorld().blockAt(0, 0, 0), Blocks.bedrock);
   });
 
+  test(
+    'MDRT2 preserves all liquid metadata and additive obsidian id',
+    () async {
+      final blocks = Uint16List(WorldDocument.blockCount);
+      var index = 0;
+      for (final liquid in <int>[Blocks.water, Blocks.lava]) {
+        for (var rawMetadata = 0; rawMetadata < 16; rawMetadata++) {
+          blocks[index++] = Blocks.pack(liquid, rawMetadata);
+        }
+      }
+      blocks[index] = Blocks.pack(Blocks.obsidian, 15);
+
+      final encoded = await MdrtCodec.encode(
+        WorldDocument(metadata: metadata, blocks: blocks),
+      );
+      final decoded = await MdrtCodec.decode(encoded);
+
+      index = 0;
+      for (final liquid in <int>[Blocks.water, Blocks.lava]) {
+        for (var rawMetadata = 0; rawMetadata < 16; rawMetadata++) {
+          final raw = decoded.blocks[index++];
+          expect(Blocks.id(raw), liquid);
+          expect(Blocks.meta(raw), rawMetadata);
+        }
+      }
+      expect(decoded.blocks[index], Blocks.pack(Blocks.obsidian, 15));
+    },
+  );
+
   test('MDRT1 migrates in memory with supplied metadata', () async {
     final blocks = Uint16List(WorldDocument.blockCount)..[12] = Blocks.sponge;
     final raw = Uint8List.fromList(blocks.buffer.asUint8List());
@@ -53,6 +82,29 @@ void main() {
     expect(decoded.metadata.formatVersion, 2);
     expect(decoded.blocks[12], Blocks.sponge);
   });
+
+  test(
+    'MDRT1 preserves the complete legacy id range and raw metadata',
+    () async {
+      final blocks = Uint16List(WorldDocument.blockCount);
+      for (var id = Blocks.stone; id < Blocks.obsidian; id++) {
+        blocks[id] = Blocks.pack(id, id & 0x0f);
+      }
+      final raw = Uint8List.fromList(blocks.buffer.asUint8List());
+      final gzipBlocks = Uint8List.fromList(gzip.encode(raw));
+      final bytes = Uint8List(13 + gzipBlocks.length);
+      bytes.setRange(0, 5, <int>[0x4d, 0x44, 0x52, 0x54, 0x31]);
+      ByteData.sublistView(bytes).setInt64(5, metadata.seed, Endian.little);
+      bytes.setRange(13, bytes.length, gzipBlocks);
+
+      final decoded = await MdrtCodec.decode(bytes, legacyMetadata: metadata);
+
+      for (var id = Blocks.stone; id < Blocks.obsidian; id++) {
+        expect(decoded.blocks[id], Blocks.pack(id, id & 0x0f));
+      }
+      expect(decoded.metadata.formatVersion, MdrtCodec.currentFormatVersion);
+    },
+  );
 
   test('corrupt and unsupported payloads reject closed', () async {
     expect(

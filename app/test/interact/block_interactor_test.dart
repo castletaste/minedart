@@ -51,11 +51,19 @@ void main() {
       expect(canPlaceBlock(world, 16, 8, 16, Blocks.air, box), isFalse);
     });
 
-    test('replaces water', () {
+    test('replaces water and lava at every metadata level', () {
       final world = _flatWorld();
-      world.setBlock(16, 8, 16, Blocks.pack(Blocks.water));
       final box = Aabb()..setValues(-1, -1, -1, -1, -1, -1);
-      expect(canPlaceBlock(world, 16, 8, 16, Blocks.stone, box), isTrue);
+      for (final liquid in <int>[Blocks.water, Blocks.lava]) {
+        for (var metadata = 0; metadata < 16; metadata++) {
+          world.setBlock(16, 8, 16, Blocks.pack(liquid, metadata));
+          expect(
+            canPlaceBlock(world, 16, 8, 16, Blocks.stone, box),
+            isTrue,
+            reason: 'liquid=$liquid metadata=$metadata',
+          );
+        }
+      }
     });
   });
 
@@ -129,6 +137,26 @@ void main() {
       expect(dirty, isNotEmpty);
     });
 
+    test('placing replaces water and lava including falling metadata', () {
+      for (final liquid in <int>[Blocks.water, Blocks.lava]) {
+        final world = _flatWorld();
+        world.setBlock(16, 4, 16, Blocks.pack(liquid, 15));
+        final dirty = <int>{};
+        final interactor = BlockInteractor(world: world, onDirty: dirty.addAll);
+
+        final result = interactor.placeBlock(
+          Vector3(16.5, 8.0, 16.5),
+          Vector3(0, -1, 0),
+          Blocks.brick,
+        );
+
+        expect(result.kind, BlockEditKind.placed, reason: 'liquid=$liquid');
+        expect(result.y, 4);
+        expect(world.blockAt(16, 4, 16), Blocks.pack(Blocks.brick));
+        expect(dirty, isNotEmpty);
+      }
+    });
+
     test('refuses to place a solid block inside the player', () {
       final world = _flatWorld();
       var calls = 0;
@@ -160,11 +188,15 @@ void main() {
   });
 
   group('isReplaceable', () {
-    test('air and water only', () {
+    test('air, water and lava only regardless of liquid metadata', () {
       expect(isReplaceable(Blocks.pack(Blocks.air)), isTrue);
-      expect(isReplaceable(Blocks.pack(Blocks.water)), isTrue);
+      for (var metadata = 0; metadata < 16; metadata++) {
+        expect(isReplaceable(Blocks.pack(Blocks.water, metadata)), isTrue);
+        expect(isReplaceable(Blocks.pack(Blocks.lava, metadata)), isTrue);
+      }
       expect(isReplaceable(Blocks.pack(Blocks.stone)), isFalse);
       expect(isReplaceable(Blocks.pack(Blocks.flowerRose)), isFalse);
+      expect(isReplaceable(Blocks.pack(Blocks.mushroomRed)), isFalse);
     });
   });
 }
