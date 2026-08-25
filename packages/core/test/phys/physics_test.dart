@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:minedart_core/minedart_core.dart';
 import 'package:test/test.dart';
 import 'package:vector_math/vector_math.dart';
@@ -152,6 +154,130 @@ void main() {
       expect(body.onGround, isTrue);
     });
 
+    test('partial-height liquid activates only below its Alpha surface', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      _fillLiquidPool(world, Blocks.water, level: 7);
+      const surfaceY = 1 + 1 / 9;
+      final above = PlayerBody(position: Vector3(8.5, surfaceY + 0.001, 8.5));
+      final immersed = PlayerBody(
+        position: Vector3(8.5, surfaceY - 0.001, 8.5),
+      );
+
+      PhysicsSim().step(world, above, PlayerInput.idle, PhysicsSim.fixedDt);
+      PhysicsSim().step(world, immersed, PlayerInput.idle, PhysicsSim.fixedDt);
+
+      expect(
+        above.velocity.y,
+        closeTo(-PhysicsSim.gravity * PhysicsSim.fixedDt, 1e-6),
+      );
+      expect(immersed.velocity.y.abs(), lessThan(above.velocity.y.abs()));
+    });
+
+    test('world-border immersion counts outside columns as surface air', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      for (var x = 0; x <= 1; x++) {
+        for (var z = 7; z <= 9; z++) {
+          world.setBlock(x, 1, z, LiquidState.pack(Blocks.water, 0));
+        }
+      }
+
+      // At x=0 the Alpha 2x2 corner average sees two source samples and two
+      // outside-air samples: height = 1 - ((2*11/9 + 2) / 24) = 22/27.
+      // The opposite corner is surrounded by source water at height 8/9.
+      // A body centered at x=.3 reaches x=.6, so the bilinear footprint max is
+      // 22/27 + (8/9 - 22/27) * .6 = 116/135.
+      const footprintMaxHeight = 116 / 135;
+      final above = PlayerBody(
+        position: Vector3(0.3, 1 + footprintMaxHeight + 0.001, 8.5),
+      );
+      final immersed = PlayerBody(
+        position: Vector3(0.3, 1 + footprintMaxHeight - 0.001, 8.5),
+      );
+
+      PhysicsSim().step(world, above, PlayerInput.idle, PhysicsSim.fixedDt);
+      PhysicsSim().step(world, immersed, PlayerInput.idle, PhysicsSim.fixedDt);
+
+      expect(
+        above.velocity.y,
+        closeTo(-PhysicsSim.gravity * PhysicsSim.fixedDt, 1e-6),
+      );
+      expect(immersed.velocity.y.abs(), lessThan(above.velocity.y.abs()));
+    });
+
+    for (final liquidId in [Blocks.water, Blocks.lava]) {
+      final liquidName = liquidId == Blocks.water ? 'water' : 'lava';
+      test('$liquidName current follows the neighbor-level gradient', () {
+        final world = VoxelWorld();
+        _fillFloor(world);
+        for (var z = 7; z <= 9; z++) {
+          for (var x = 7; x <= 9; x++) {
+            world.setBlock(x, 1, z, LiquidState.pack(liquidId, x - 7));
+          }
+        }
+        final body = PlayerBody(position: Vector3(8.5, 1.01, 8.5));
+
+        PhysicsSim().step(world, body, PlayerInput.idle, PhysicsSim.fixedDt);
+
+        expect(body.velocity.x, greaterThan(0));
+        expect(body.velocity.z, closeTo(0, 1e-12));
+      });
+    }
+
+    test('falling liquid contributes a downward waterfall current', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      _fillLiquidPool(world, Blocks.water, falling: true);
+      final body = PlayerBody(position: Vector3(8.5, 1.01, 8.5));
+
+      PhysicsSim().step(world, body, PlayerInput.idle, PhysicsSim.fixedDt);
+
+      expect(body.velocity.y, lessThan(-0.1));
+      expect(body.velocity.x, closeTo(0, 1e-12));
+      expect(body.velocity.z, closeTo(0, 1e-12));
+    });
+
+    test('water and lava use cube-root Alpha drag conversions', () {
+      final waterWorld = VoxelWorld();
+      final lavaWorld = VoxelWorld();
+      _fillFloor(waterWorld);
+      _fillFloor(lavaWorld);
+      _fillLiquidPool(waterWorld, Blocks.water, minX: 3, maxX: 12);
+      _fillLiquidPool(lavaWorld, Blocks.lava, minX: 3, maxX: 12);
+      final waterBody = PlayerBody(
+        position: Vector3(8.5, 1.01, 8.5),
+        velocity: Vector3(6, 0, 0),
+      );
+      final lavaBody = PlayerBody(
+        position: Vector3(8.5, 1.01, 8.5),
+        velocity: Vector3(6, 0, 0),
+      );
+
+      PhysicsSim().step(
+        waterWorld,
+        waterBody,
+        PlayerInput.idle,
+        PhysicsSim.fixedDt,
+      );
+      PhysicsSim().step(
+        lavaWorld,
+        lavaBody,
+        PlayerInput.idle,
+        PhysicsSim.fixedDt,
+      );
+
+      expect(
+        waterBody.velocity.x,
+        closeTo((6 - 0.3) * math.pow(0.8, 1 / 3), 1e-6),
+      );
+      expect(
+        lavaBody.velocity.x,
+        closeTo((6 - 0.3) * math.pow(0.5, 1 / 3), 1e-6),
+      );
+      expect(lavaBody.velocity.x, lessThan(waterBody.velocity.x));
+    });
+
     test('water slows horizontal movement, floats, and jump swims upward', () {
       final world = VoxelWorld();
       _fillFloor(world);
@@ -175,6 +301,27 @@ void main() {
       expect(body.velocity.y, greaterThan(0));
       expect(body.position.y, greaterThan(1.0001));
       expect(body.onGround, isFalse);
+    });
+
+    test('lava applies buoyancy and supports swimming', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      _fillLiquidPool(world, Blocks.lava);
+      final idleBody = PlayerBody(position: Vector3(8.5, 1.01, 8.5));
+      final swimmingBody = PlayerBody(position: Vector3(8.5, 1.01, 8.5));
+
+      PhysicsSim().step(world, idleBody, PlayerInput.idle, PhysicsSim.fixedDt);
+      PhysicsSim().step(
+        world,
+        swimmingBody,
+        const PlayerInput(jump: true),
+        PhysicsSim.fixedDt,
+      );
+
+      expect(idleBody.velocity.y, lessThan(0));
+      expect(idleBody.velocity.y, greaterThan(-0.1));
+      expect(swimmingBody.velocity.y, greaterThan(0));
+      expect(swimmingBody.position.y, greaterThan(1.01));
     });
 
     test('sprint reaches 5.6 blocks per second versus 4.3 walking', () {
@@ -232,6 +379,30 @@ void main() {
       expect(sprintingBody.velocity.x, closeTo(walkingBody.velocity.x, 1e-12));
     });
 
+    test('sprint does not increase movement speed in lava', () {
+      final world = VoxelWorld();
+      _fillFloor(world);
+      for (var x = 3; x <= 9; x++) {
+        for (var y = 1; y <= 2; y++) {
+          world.setBlock(x, y, 4, Blocks.lava);
+          world.setBlock(x, y, 8, Blocks.lava);
+        }
+      }
+      final walkingBody = PlayerBody(position: Vector3(4.5, 1.0001, 8.5));
+      final sprintingBody = PlayerBody(position: Vector3(4.5, 1.0001, 4.5));
+
+      _ticks(PhysicsSim(), world, walkingBody, 20, const PlayerInput(moveX: 1));
+      _ticks(
+        PhysicsSim(),
+        world,
+        sprintingBody,
+        20,
+        const PlayerInput(moveX: 1, sprint: true),
+      );
+
+      expect(sprintingBody.velocity.x, closeTo(walkingBody.velocity.x, 1e-12));
+    });
+
     test('sprint still resolves wall collisions in fixed steps', () {
       final world = VoxelWorld();
       _fillFloor(world);
@@ -272,6 +443,24 @@ void _fillFloor(VoxelWorld world) {
   for (var x = 0; x < 16; x++) {
     for (var z = 0; z < 16; z++) {
       world.setBlock(x, 0, z, Blocks.stone);
+    }
+  }
+}
+
+void _fillLiquidPool(
+  VoxelWorld world,
+  int liquidId, {
+  int level = 0,
+  bool falling = false,
+  int minX = 7,
+  int maxX = 9,
+  int minZ = 7,
+  int maxZ = 9,
+}) {
+  final raw = LiquidState.pack(liquidId, level, falling: falling);
+  for (var x = minX; x <= maxX; x++) {
+    for (var z = minZ; z <= maxZ; z++) {
+      world.setBlock(x, 1, z, raw);
     }
   }
 }
