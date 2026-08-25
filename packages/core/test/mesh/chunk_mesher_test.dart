@@ -47,47 +47,170 @@ void main() {
     expect(mesh.chunkIndex, VoxelWorld.chunkIndexOf(1, 1, 1));
   });
 
-  test('water has a 0.875 surface and no water-water face', () {
-    final world = VoxelWorld();
-    world.setBlock(8, 8, 8, Blocks.water);
-    world.setBlock(9, 8, 8, Blocks.water);
+  test('water and lava render every level and falling metadata height', () {
+    for (final liquidId in [Blocks.water, Blocks.lava]) {
+      for (var metadata = 0; metadata < 16; metadata++) {
+        final world = VoxelWorld();
+        final raw = Blocks.pack(liquidId, metadata);
+        for (var z = 7; z <= 9; z++) {
+          for (var x = 7; x <= 9; x++) {
+            world.setBlock(x, 8, z, raw);
+          }
+        }
+
+        final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+        final top = _topQuad(mesh.translucentVertices, 8, 8, 8);
+        final expectedHeight = LiquidState.surfaceHeight(raw);
+
+        expect(
+          top.map((vertex) => vertex.y - 8),
+          everyElement(closeTo(expectedHeight, 1e-6)),
+          reason: 'liquid=$liquidId metadata=$metadata',
+        );
+      }
+    }
+  });
+
+  test('source and falling samples have Alpha eleven-fold weight', () {
+    for (final weightedRaw in [
+      LiquidState.pack(Blocks.water, 0),
+      LiquidState.pack(Blocks.water, 7, falling: true),
+    ]) {
+      final world = VoxelWorld()
+        ..setBlock(8, 8, 8, LiquidState.pack(Blocks.water, 4))
+        ..setBlock(9, 8, 8, weightedRaw)
+        ..setBlock(8, 8, 9, LiquidState.pack(Blocks.water, 7));
+
+      final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+      final top = _topQuad(mesh.translucentVertices, 8, 8, 8);
+
+      // At corner (9, 9): level 4 has height 4/9, level 7 has 1/9,
+      // source/falling has height 8/9 with weight 11, and air has height 0.
+      expect(
+        _heightAt(top, 9, 9) - 8,
+        closeTo((4 / 9 + 1 / 9 + 11 * 8 / 9) / 14, 1e-6),
+      );
+    }
+  });
+
+  test('same-fluid cell above raises its shared corner to full height', () {
+    final world = VoxelWorld()
+      ..setBlock(8, 8, 8, LiquidState.pack(Blocks.water, 7))
+      ..setBlock(9, 9, 9, LiquidState.pack(Blocks.water, 7));
+
+    final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+    final top = _topQuad(mesh.translucentVertices, 8, 8, 8);
+
+    expect(_heightAt(top, 9, 9), closeTo(9, 1e-6));
+    expect(_heightAt(top, 8, 8), lessThan(9));
+  });
+
+  test('liquid side tops match corners and UVs retain texel scale', () {
+    final world = VoxelWorld()
+      ..setBlock(8, 8, 8, LiquidState.pack(Blocks.water, 4))
+      ..setBlock(8, 8, 9, LiquidState.pack(Blocks.water, 0));
+
+    final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+    final top = _topQuad(mesh.translucentVertices, 8, 8, 8);
+    final side = _axisQuad(
+      mesh.translucentVertices,
+      normalX: -1,
+      normalY: 0,
+      normalZ: 0,
+      matches: (quad) =>
+          quad.every((vertex) => vertex.x == 8) &&
+          quad.any((vertex) => vertex.y == 8) &&
+          quad.map((vertex) => vertex.z).reduce(_min) == 8 &&
+          quad.map((vertex) => vertex.z).reduce(_max) == 9,
+    );
+
+    const v0 = 0.5 / 256;
+    const v1 = 1 / 16 - 0.5 / 256;
+    final bottom = side.where((vertex) => vertex.y == 8).toList();
+    final sideTop = side.where((vertex) => vertex.y > 8).toList();
+    expect(bottom, hasLength(2));
+    expect(sideTop, hasLength(2));
+    for (final vertex in bottom) {
+      expect(vertex.v, closeTo(v1, 1e-6));
+    }
+    for (final vertex in sideTop) {
+      final topY = _heightAt(top, vertex.x, vertex.z);
+      expect(vertex.y, closeTo(topY, 1e-6));
+      final height = vertex.y - 8;
+      expect(vertex.v, closeTo(v1 - height * (v1 - v0), 1e-6));
+    }
+  });
+
+  test('different metadata of the same fluid culls their interface', () {
+    final world = VoxelWorld()
+      ..setBlock(8, 8, 8, LiquidState.pack(Blocks.lava, 0))
+      ..setBlock(9, 8, 8, LiquidState.pack(Blocks.lava, 7, falling: true));
 
     final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
 
     expect(mesh.opaqueIndices, isEmpty);
     expect(mesh.translucentVertexCount, 40);
     expect(mesh.translucentIndices.length, 60);
-    final yValues = <double>[];
-    for (
-      var offset = 1;
-      offset < mesh.translucentVertices.length;
-      offset += VertexLayout.floatsPerVertex
-    ) {
-      yValues.add(mesh.translucentVertices[offset]);
-    }
-    expect(yValues, contains(8.0));
-    expect(yValues, contains(closeTo(8.875, 1e-6)));
-    expect(yValues.reduce((a, b) => a > b ? a : b), closeTo(8.875, 1e-6));
+    expect(
+      _hasAxisQuadAt(
+        mesh.translucentVertices,
+        x: 9,
+        normalX: 1,
+        normalY: 0,
+        normalZ: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      _hasAxisQuadAt(
+        mesh.translucentVertices,
+        x: 9,
+        normalX: -1,
+        normalY: 0,
+        normalZ: 0,
+      ),
+      isFalse,
+    );
   });
 
-  test('lava shares fluid surface height and culls lava-lava face', () {
-    final world = VoxelWorld();
-    world.setBlock(8, 8, 8, Blocks.lava);
-    world.setBlock(9, 8, 8, Blocks.lava);
+  test('liquid heights and culling are continuous across chunk borders', () {
+    final world = VoxelWorld()
+      ..setBlock(15, 8, 8, LiquidState.pack(Blocks.water, 0))
+      ..setBlock(16, 8, 8, LiquidState.pack(Blocks.water, 7));
 
-    final mesh = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+    final left = mesher.mesh(ChunkSnapshot.capture(world, 0, 0, 0));
+    final right = mesher.mesh(ChunkSnapshot.capture(world, 1, 0, 0));
+    final leftTop = _topQuad(left.translucentVertices, 15, 8, 8);
+    final rightTop = _topQuad(right.translucentVertices, 0, 8, 8);
 
-    expect(mesh.translucentVertexCount, 40);
-    expect(mesh.translucentIndices.length, 60);
-    final yValues = <double>{};
-    for (
-      var offset = 1;
-      offset < mesh.translucentVertices.length;
-      offset += VertexLayout.floatsPerVertex
-    ) {
-      yValues.add(mesh.translucentVertices[offset]);
+    for (final z in [8.0, 9.0]) {
+      expect(
+        _heightAt(leftTop, 16, z),
+        closeTo(_heightAt(rightTop, 0, z), 1e-6),
+      );
     }
-    expect(yValues, contains(closeTo(8.875, 1e-6)));
+    expect(left.translucentVertexCount, 20);
+    expect(right.translucentVertexCount, 20);
+    expect(
+      _hasAxisQuadAt(
+        left.translucentVertices,
+        x: 16,
+        normalX: 1,
+        normalY: 0,
+        normalZ: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      _hasAxisQuadAt(
+        right.translucentVertices,
+        x: 0,
+        normalX: -1,
+        normalY: 0,
+        normalZ: 0,
+      ),
+      isFalse,
+    );
   });
 
   test('ambient occlusion darkens a blocked top corner', () {
@@ -229,6 +352,99 @@ void main() {
     expect(second.translucentIndices, orderedEquals(first.translucentIndices));
   });
 }
+
+typedef _MeshVertex = ({double x, double y, double z, double u, double v});
+
+List<_MeshVertex> _topQuad(
+  Float32List vertices,
+  int blockX,
+  int blockY,
+  int blockZ,
+) => _axisQuad(
+  vertices,
+  normalX: 0,
+  normalY: 1,
+  normalZ: 0,
+  matches: (quad) =>
+      quad.map((vertex) => vertex.x).reduce(_min) == blockX &&
+      quad.map((vertex) => vertex.x).reduce(_max) == blockX + 1 &&
+      quad.map((vertex) => vertex.z).reduce(_min) == blockZ &&
+      quad.map((vertex) => vertex.z).reduce(_max) == blockZ + 1 &&
+      quad.every((vertex) => vertex.y >= blockY && vertex.y <= blockY + 1),
+);
+
+List<_MeshVertex> _axisQuad(
+  Float32List vertices, {
+  required double normalX,
+  required double normalY,
+  required double normalZ,
+  required bool Function(List<_MeshVertex> quad) matches,
+}) {
+  for (final quad in _axisQuads(
+    vertices,
+    normalX: normalX,
+    normalY: normalY,
+    normalZ: normalZ,
+  )) {
+    if (matches(quad)) return quad;
+  }
+  throw StateError(
+    'No matching quad with normal ($normalX, $normalY, $normalZ)',
+  );
+}
+
+Iterable<List<_MeshVertex>> _axisQuads(
+  Float32List vertices, {
+  required double normalX,
+  required double normalY,
+  required double normalZ,
+}) sync* {
+  const stride = VertexLayout.floatsPerVertex;
+  final vertexCount = vertices.length ~/ stride;
+  for (var first = 0; first < vertexCount; first += 4) {
+    final firstOffset = first * stride;
+    if (vertices[firstOffset + 9] != normalX ||
+        vertices[firstOffset + 10] != normalY ||
+        vertices[firstOffset + 11] != normalZ) {
+      continue;
+    }
+    yield List<_MeshVertex>.generate(4, (corner) {
+      final offset = (first + corner) * stride;
+      return (
+        x: vertices[offset],
+        y: vertices[offset + 1],
+        z: vertices[offset + 2],
+        u: vertices[offset + 3],
+        v: vertices[offset + 4],
+      );
+    }, growable: false);
+  }
+}
+
+bool _hasAxisQuadAt(
+  Float32List vertices, {
+  required double x,
+  required double normalX,
+  required double normalY,
+  required double normalZ,
+}) {
+  for (final quad in _axisQuads(
+    vertices,
+    normalX: normalX,
+    normalY: normalY,
+    normalZ: normalZ,
+  )) {
+    if (quad.every((vertex) => vertex.x == x)) return true;
+  }
+  return false;
+}
+
+double _heightAt(List<_MeshVertex> quad, num x, num z) =>
+    quad.singleWhere((vertex) => vertex.x == x && vertex.z == z).y;
+
+double _min(double left, double right) => left < right ? left : right;
+
+double _max(double left, double right) => left > right ? left : right;
 
 ChunkSnapshot _filledSnapshot(int Function(int x, int y, int z) blockAt) {
   final blocks = Uint16List(ChunkSnapshot.volume);

@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import '../block.dart';
 import '../chunk.dart';
+import '../liquid.dart';
 import '../mesh_data.dart';
 import 'chunk_snapshot.dart';
 
@@ -38,6 +39,11 @@ final class ChunkMesher {
           }
 
           final writer = def.translucent ? translucent : opaque;
+          final liquidId =
+              def.behavior == BlockBehavior.water ||
+                  def.behavior == BlockBehavior.lava
+              ? id
+              : null;
           for (var face = 0; face < 6; face++) {
             final normalOffset = face * 3;
             final neighborRaw = snapshot.blockAt(
@@ -55,9 +61,7 @@ final class ChunkMesher {
                   z,
                   face,
                   def.tiles[face],
-                  isWater:
-                      def.behavior == BlockBehavior.water ||
-                      def.behavior == BlockBehavior.lava,
+                  liquidId: liquidId,
                 );
               } else {
                 final interiorFaces = def.translucent
@@ -166,9 +170,11 @@ final class ChunkMesher {
       z,
       face,
       def.tiles[face],
-      isWater:
+      liquidId:
           def.behavior == BlockBehavior.water ||
-          def.behavior == BlockBehavior.lava,
+              def.behavior == BlockBehavior.lava
+          ? id
+          : null,
     );
   }
 
@@ -194,7 +200,7 @@ final class ChunkMesher {
     int z,
     int face,
     int tile, {
-    required bool isWater,
+    required int? liquidId,
   }) {
     if (!writer.canWriteQuads(1)) return;
     final normalOffset = face * 3;
@@ -213,6 +219,7 @@ final class ChunkMesher {
 
     _writeFaceVertex(
       writer,
+      snapshot,
       x,
       y,
       z,
@@ -223,10 +230,11 @@ final class ChunkMesher {
       normalY,
       normalZ,
       shadedLight * ao0,
-      isWater,
+      liquidId,
     );
     _writeFaceVertex(
       writer,
+      snapshot,
       x,
       y,
       z,
@@ -237,10 +245,11 @@ final class ChunkMesher {
       normalY,
       normalZ,
       shadedLight * ao1,
-      isWater,
+      liquidId,
     );
     _writeFaceVertex(
       writer,
+      snapshot,
       x,
       y,
       z,
@@ -251,10 +260,11 @@ final class ChunkMesher {
       normalY,
       normalZ,
       shadedLight * ao2,
-      isWater,
+      liquidId,
     );
     _writeFaceVertex(
       writer,
+      snapshot,
       x,
       y,
       z,
@@ -265,12 +275,13 @@ final class ChunkMesher {
       normalY,
       normalZ,
       shadedLight * ao3,
-      isWater,
+      liquidId,
     );
   }
 
   static void _writeFaceVertex(
     _BufferWriter writer,
+    ChunkSnapshot snapshot,
     int x,
     int y,
     int z,
@@ -281,20 +292,81 @@ final class ChunkMesher {
     int normalY,
     int normalZ,
     double light,
-    bool isWater,
+    int? liquidId,
   ) {
+    final cornerX = _faceCorners[cornerOffset];
     final cornerY = _faceCorners[cornerOffset + 1];
+    final cornerZ = _faceCorners[cornerOffset + 2];
+    var vertexHeight = cornerY.toDouble();
+    double? sideHeight;
+    if (liquidId != null && cornerY == 1) {
+      vertexHeight = _liquidCornerHeight(
+        snapshot,
+        liquidId,
+        x + cornerX,
+        y,
+        z + cornerZ,
+      );
+      if (normalY == 0) sideHeight = vertexHeight;
+    }
     writer.writeVertex(
-      x + _faceCorners[cornerOffset].toDouble(),
-      y + (isWater && cornerY == 1 ? _waterSurfaceHeight : cornerY.toDouble()),
-      z + _faceCorners[cornerOffset + 2].toDouble(),
+      x + cornerX.toDouble(),
+      y + vertexHeight,
+      z + cornerZ.toDouble(),
       uvCorner,
       tile,
       light,
       normalX.toDouble(),
       normalY.toDouble(),
       normalZ.toDouble(),
+      sideHeight: sideHeight,
     );
+  }
+
+  /// Alpha samples the four columns sharing a geometric liquid corner.
+  /// Source/falling columns count eleven times, non-solid non-fluid columns
+  /// contribute zero height, and any same-fluid cell above fills the corner.
+  /// The 18^3 snapshot halo covers all chunk-edge samples.
+  static double _liquidCornerHeight(
+    ChunkSnapshot snapshot,
+    int liquidId,
+    int cornerX,
+    int y,
+    int cornerZ,
+  ) {
+    var weightedHeight = 0.0;
+    var totalWeight = 0;
+    for (var offsetZ = 0; offsetZ < 2; offsetZ++) {
+      final sampleZ = cornerZ - offsetZ;
+      for (var offsetX = 0; offsetX < 2; offsetX++) {
+        final sampleX = cornerX - offsetX;
+        if (Blocks.id(snapshot.blockAt(sampleX, y + 1, sampleZ)) == liquidId) {
+          return 1;
+        }
+
+        final raw = snapshot.blockAt(sampleX, y, sampleZ);
+        final sampleId = Blocks.id(raw);
+        if (sampleId == liquidId) {
+          final weight =
+              LiquidState.level(raw) == 0 || LiquidState.isFalling(raw)
+              ? 11
+              : 1;
+          weightedHeight += LiquidState.surfaceHeight(raw) * weight;
+          totalWeight += weight;
+        } else if (_isNonSolidHeightSample(sampleId)) {
+          totalWeight++;
+        }
+      }
+    }
+    assert(totalWeight > 0, 'A rendered liquid corner includes its block.');
+    return totalWeight == 0 ? 0 : weightedHeight / totalWeight;
+  }
+
+  static bool _isNonSolidHeightSample(int blockId) {
+    if (blockId == Blocks.air) return true;
+    if (blockId >= blockDefs.length) return false;
+    final def = blockDefs[blockId];
+    return def != null && !def.solid;
   }
 
   static double _cornerAo(
@@ -575,8 +647,9 @@ final class _BufferWriter {
     double light,
     double normalX,
     double normalY,
-    double normalZ,
-  ) {
+    double normalZ, {
+    double? sideHeight,
+  }) {
     _ensureVertexCapacity(VertexLayout.floatsPerVertex);
     final offset = _vertexFloatOffset;
     _vertices[offset] = x;
@@ -590,9 +663,12 @@ final class _BufferWriter {
     final u1 = (tileX + 1) / 16 - _atlasInset;
     final v1 = (tileY + 1) / 16 - _atlasInset;
     _vertices[offset + 3] = uvCorner == 0 || uvCorner == 3 ? u0 : u1;
-    // Corners 0,1 are the block-space bottom of the face; they must sample the
-    // tile's bottom row (v1). Texture images have v0 at the top.
-    _vertices[offset + 4] = uvCorner < 2 ? v1 : v0;
+    // Corners 0,1 are the block-space bottom of a cube face and sample v1.
+    // Sloped liquid side tops crop the tile by their physical height instead
+    // of stretching it, so neighboring sides share both position and V.
+    _vertices[offset + 4] = sideHeight == null
+        ? (uvCorner < 2 ? v1 : v0)
+        : v1 - sideHeight * (v1 - v0);
 
     _vertices[offset + 5] = light;
     _vertices[offset + 6] = light;
@@ -645,7 +721,6 @@ final class _BufferWriter {
 }
 
 const double _atlasInset = 0.5 / 256;
-const double _waterSurfaceHeight = 0.875;
 const int _uint16VertexCount = 1 << 16;
 
 /// Face order: +X, -X, +Y, -Y, +Z, -Z.
