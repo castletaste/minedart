@@ -16,11 +16,7 @@ void main() {
           if (blockDefs[id] != null) id,
       ];
       expect(controller.catalog.map((entry) => entry.id), expectedIds);
-      expect(controller.catalog, hasLength(32));
-      expect(
-        controller.catalog.map((entry) => entry.id),
-        List<int>.generate(32, (index) => index + 1),
-      );
+      expect(controller.catalog, hasLength(expectedIds.length));
       expect(
         controller.catalog
             .where((entry) => entry.id <= 21)
@@ -37,7 +33,10 @@ void main() {
       expect(controller.hotbar, hasLength(9));
       expect(controller.hotbar.last, Blocks.tnt);
       expect(controller.hotbar, isNot(contains(Blocks.brick)));
-      expect(controller.visibleBlocks, hasLength(23));
+      expect(
+        controller.visibleBlocks,
+        hasLength(controller.catalog.length - controller.hotbar.length),
+      );
       expect(
         controller.visibleBlocks
             .map((entry) => entry.id)

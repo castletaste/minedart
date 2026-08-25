@@ -1,6 +1,9 @@
 name: Deploy Minedart web
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -34,6 +37,18 @@ jobs:
           flutter-version: 3.44.4
           cache: true
           pub-cache: true
+
+      - name: Resolve core dependencies
+        working-directory: packages/core
+        run: dart pub get
+
+      - name: Analyze core
+        working-directory: packages/core
+        run: dart analyze
+
+      - name: Test core
+        working-directory: packages/core
+        run: dart test
 
       - name: Resolve vendored flame_3d dependencies
         working-directory: third_party/flame_3d
