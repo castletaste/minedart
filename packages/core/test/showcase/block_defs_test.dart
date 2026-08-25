@@ -2,7 +2,7 @@ import 'package:minedart_core/minedart_core.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('legacy ids stay stable and showcase ids occupy 22 through 32', () {
+  test('legacy ids stay stable and additive obsidian occupies id 33', () {
     expect([
       Blocks.stone,
       Blocks.dirt,
@@ -39,7 +39,8 @@ void main() {
       Blocks.clothLime,
       Blocks.clothBlue,
     ], orderedEquals(List.generate(11, (index) => index + 22)));
-    expect(Blocks.count, 33);
+    expect(Blocks.obsidian, 33);
+    expect(Blocks.count, 34);
     expect(blockDefs, hasLength(Blocks.count));
     expect(blockDefs.skip(1), everyElement(isNotNull));
   });
@@ -50,11 +51,13 @@ void main() {
     expect(Tiles.tntTop, 25);
     expect(Tiles.tntBottom, 26);
     expect(Tiles.clothBlue, 35);
+    expect(Tiles.obsidian, 36);
 
     final tnt = blockDefs[Blocks.tnt]!;
     expect(tnt.tiles[Face.posY], Tiles.tntTop);
     expect(tnt.tiles[Face.negY], Tiles.tntBottom);
     expect(tnt.tiles[Face.posX], Tiles.tntSide);
+    expect(blockDefs[Blocks.obsidian]!.tiles, everyElement(Tiles.obsidian));
   });
 
   test('definitions own behavior and special break policy', () {

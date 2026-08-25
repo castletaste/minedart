@@ -35,9 +35,10 @@ abstract final class Blocks {
   static const int clothYellow = 30;
   static const int clothLime = 31;
   static const int clothBlue = 32;
+  static const int obsidian = 33;
 
   /// Exclusive upper bound for valid block ids, including air.
-  static const int count = 33;
+  static const int count = 34;
 
   static int id(int raw) => raw & 0x0FFF;
   static int meta(int raw) => (raw >> 12) & 0xF;
@@ -137,6 +138,7 @@ abstract final class Tiles {
   static const int clothYellow = 33;
   static const int clothLime = 34;
   static const int clothBlue = 35;
+  static const int obsidian = 36;
 }
 
 const List<BlockDef?> blockDefs = [
@@ -529,6 +531,17 @@ const List<BlockDef?> blockDefs = [
       Tiles.clothBlue,
       Tiles.clothBlue,
       Tiles.clothBlue,
+    ],
+  ),
+  BlockDef(
+    name: 'obsidian',
+    tiles: [
+      Tiles.obsidian,
+      Tiles.obsidian,
+      Tiles.obsidian,
+      Tiles.obsidian,
+      Tiles.obsidian,
+      Tiles.obsidian,
     ],
   ),
 ];

@@ -2,6 +2,7 @@
 library;
 
 export 'src/block.dart';
+export 'src/liquid.dart';
 export 'src/chunk.dart';
 export 'src/world.dart';
 export 'src/mesh_data.dart';
