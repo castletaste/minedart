@@ -115,9 +115,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   bool _invertMouseY = false;
 
   void Function()? onPauseRequested;
-  void Function()? onFirstMovementInput;
+  void Function()? onMovementActivity;
   void Function(FogPreset preset)? onFogPresetChanged;
-  bool _reportedFirstMovementInput = false;
 
   void setBindings(GameBindings value) {
     _bindings = value.copy();
@@ -603,7 +602,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   ) {
     if (_uiInputCaptured) return KeyEventResult.ignored;
     if (event is KeyDownEvent && _isMovementKey(event.logicalKey)) {
-      _reportFirstMovementInput();
+      _reportMovementActivity();
     }
     _updateSprintState(event);
     // Flutter UI shortcuts live in the ancestor CallbackShortcuts. Returning
@@ -677,11 +676,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       key == _bindings[GameControl.strafeRight] ||
       key == _bindings[GameControl.jump];
 
-  void _reportFirstMovementInput() {
-    if (_reportedFirstMovementInput) return;
-    _reportedFirstMovementInput = true;
-    onFirstMovementInput?.call();
-  }
+  void _reportMovementActivity() => onMovementActivity?.call();
 
   static bool _hasCommandModifier(Set<LogicalKeyboardKey> keys) =>
       keys.contains(LogicalKeyboardKey.metaLeft) ||
@@ -881,7 +876,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   void _onMouseEvent(MouseLookEvent event) {
     switch (event) {
       case MouseDelta(:final dx, :final dy):
-        if (dx != 0 || dy != 0) _reportFirstMovementInput();
+        if (dx != 0 || dy != 0) _reportMovementActivity();
         _pendingMouseDx += dx;
         _pendingMouseDy += dy;
       case MouseCaptureChanged(:final captured):
@@ -972,6 +967,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       pitchDelta -= _keyboardLookSpeed * dt;
     }
     if (yawDelta == 0 && pitchDelta == 0) return;
+    _reportMovementActivity();
 
     _yaw = (_yaw + yawDelta) % (math.pi * 2);
     _pitch = (_pitch + pitchDelta).clamp(-_pitchLimit, _pitchLimit);
@@ -994,6 +990,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       jump: _keys.contains(_bindings[GameControl.jump]),
       sprint: _sprintDetector.isSprinting,
     );
+    if (input.moveX != 0 || input.moveZ != 0 || input.jump) {
+      _reportMovementActivity();
+    }
     final previousX = _playerBody.position.x;
     final previousZ = _playerBody.position.z;
     _physics.advance(voxelWorld, _playerBody, input, dt);
@@ -1057,6 +1056,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _eyePosition.y = _eyePosition.y
         .clamp(1, WorldDims.worldBlocksY - 1)
         .toDouble();
+    _reportMovementActivity();
   }
 
   double _axis(LogicalKeyboardKey positive, LogicalKeyboardKey negative) {

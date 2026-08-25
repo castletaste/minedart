@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/showcase/integration/launch_config.dart';
 
@@ -18,6 +20,7 @@ void main() {
     expect(config.preset, LaunchWorldPreset.flat);
     expect(config.worldId, 'a_b');
     expect(config.requestsGeneratedWorld, isTrue);
+    expect(config.seedWasSpecified, isTrue);
 
     expect(
       ShowcaseLaunchConfig.fromUri(
@@ -30,6 +33,50 @@ void main() {
         Uri.parse('https://example.test/'),
       ).requestsGeneratedWorld,
       isFalse,
+    );
+    expect(
+      ShowcaseLaunchConfig.fromUri(
+        Uri.parse('https://example.test/?preset=islands'),
+      ).seedWasSpecified,
+      isFalse,
+    );
+  });
+
+  test('missing seeds resolve lazily while explicit seeds stay exact', () {
+    var calls = 0;
+    int generated() {
+      calls++;
+      return -123;
+    }
+
+    final implicit = ShowcaseLaunchConfig.fromUri(
+      Uri.parse('https://example.test/?preset=islands'),
+    );
+    expect(implicit.resolveNewWorldSeed(generate: generated), -123);
+    expect(calls, 1);
+
+    final explicit = ShowcaseLaunchConfig.fromUri(
+      Uri.parse('https://example.test/?seed=42&preset=islands'),
+    );
+    expect(explicit.resolveNewWorldSeed(generate: generated), 42);
+    expect(resolveOptionalWorldSeed(7, generate: generated), 7);
+    expect(calls, 1, reason: 'explicit seeds must not consume entropy');
+  });
+
+  test('random world seeds cover the signed 32-bit contract', () {
+    final random = Random(0x5eed);
+    final first = generateRandomWorldSeed(random);
+    final second = generateRandomWorldSeed(random);
+
+    expect(first, inInclusiveRange(-0x80000000, 0x7FFFFFFF));
+    expect(second, inInclusiveRange(-0x80000000, 0x7FFFFFFF));
+    expect(second, isNot(first));
+  });
+
+  test('platform entropy resolves a valid seed', () {
+    expect(
+      generateRandomWorldSeed(),
+      inInclusiveRange(-0x80000000, 0x7FFFFFFF),
     );
   });
 

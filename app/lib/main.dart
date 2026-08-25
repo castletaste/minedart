@@ -37,23 +37,27 @@ Future<WorldDocument> _loadInitialWorld(
   WorldRepository repository,
   ShowcaseLaunchConfig launch,
 ) async {
+  int? generatedSeed;
+  int seedForNewWorld() => generatedSeed ??= launch.resolveNewWorldSeed();
+
   if (launch.worldId case final id?) {
     final selected = await _loadRecovering(repository, id);
     if (selected != null) return selected;
   }
   if (launch.requestsGeneratedWorld) {
-    final world = generatePresetWorld(launch.seed, launch.preset);
+    final seed = seedForNewWorld();
+    final world = generatePresetWorld(seed, launch.preset);
     final now = DateTime.now().toUtc();
     final id = sharedWorldId(
-      launch.seed,
+      seed,
       launch.preset,
       nonce: now.microsecondsSinceEpoch,
     );
     final shared = WorldDocument.fromWorld(
       metadata: WorldMetadata(
         id: id,
-        name: '${launch.preset.name} · ${launch.seed}',
-        seed: launch.seed,
+        name: '${launch.preset.name} · $seed',
+        seed: seed,
         createdAt: now,
         updatedAt: now,
         spawn: defaultWorldSpawn(world),
@@ -69,7 +73,7 @@ Future<WorldDocument> _loadInitialWorld(
     if (recent != null) return recent;
   }
 
-  final legacy = await readLegacyWorld(fallbackSeed: launch.seed);
+  final legacy = await readLegacyWorld(fallbackSeed: seedForNewWorld());
   if (legacy != null) {
     final world = legacy.toVoxelWorld();
     final now = DateTime.now().toUtc();
@@ -87,13 +91,14 @@ Future<WorldDocument> _loadInitialWorld(
     return migrated;
   }
 
-  final world = generatePresetWorld(launch.seed, LaunchWorldPreset.classic);
+  final seed = seedForNewWorld();
+  final world = generatePresetWorld(seed, LaunchWorldPreset.classic);
   final now = DateTime.now().toUtc();
   final document = WorldDocument.fromWorld(
     metadata: WorldMetadata(
       id: 'world-${now.microsecondsSinceEpoch.toRadixString(36)}',
       name: 'Classic World',
-      seed: launch.seed,
+      seed: seed,
       createdAt: now,
       updatedAt: now,
       spawn: defaultWorldSpawn(world),

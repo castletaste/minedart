@@ -16,8 +16,9 @@ import '../controller/showcase_controllers.dart';
 import '../render/showcase_render.dart' as renderer;
 import '../ui/controls_hint.dart';
 import '../ui/showcase_ui.dart';
-import 'launch_config.dart';
+import 'controls_hint_idle.dart';
 import 'input_capture_coordinator.dart';
+import 'launch_config.dart';
 import 'minimap_widgets.dart';
 import 'world_runtime.dart';
 import 'world_presets.dart';
@@ -56,7 +57,8 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
   bool _gameLoaded = false;
   bool _modalOpen = false;
   bool _switchingWorld = false;
-  bool _showStartupControls = true;
+  static const Duration _uiPollInterval = Duration(milliseconds: 250);
+  final ControlsHintIdleState _controlsHintIdle = ControlsHintIdleState();
   FogPreset? _lastAppliedOptionsFog;
   bool _syncingRenderDistance = false;
   late final InputCaptureCoordinator _inputCapture = InputCaptureCoordinator(
@@ -72,10 +74,10 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     _builder.addListener(_syncBuilderToGame);
     _options.addListener(_applyOptions);
     _minimap = ValueNotifier(_createMinimapState());
-    _minimapTimer = Timer.periodic(
-      const Duration(milliseconds: 250),
-      (_) => _updateMinimap(),
-    );
+    _minimapTimer = Timer.periodic(_uiPollInterval, (_) {
+      _updateControlsHint();
+      _updateMinimap();
+    });
     _attachGame(_runtime.game);
     unawaited(_refreshWorlds());
   }
@@ -83,10 +85,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
   void _attachGame(MinedartGame game) {
     game.hud.selectedSlot.addListener(_syncGameSlotToBuilder);
     game.onPauseRequested = () => unawaited(_showPauseOptions());
-    game.onFirstMovementInput = () {
-      if (!mounted || !_showStartupControls) return;
-      setState(() => _showStartupControls = false);
-    };
+    game.onMovementActivity = _recordMovementActivity;
     game.setUiInputCaptured(_inputCapture.isCaptured);
     game.onFogPresetChanged = (preset) {
       _options.setFogPreset(
@@ -108,7 +107,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     game.hud.selectedSlot.removeListener(_syncGameSlotToBuilder);
     game
       ..onPauseRequested = null
-      ..onFirstMovementInput = null
+      ..onMovementActivity = null
       ..onFogPresetChanged = null;
   }
 
@@ -128,12 +127,24 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
   }
 
   Future<void> _acquireModalInput() async {
+    _recordMovementActivity();
     _inputCapture.update(true);
     await _runtime.game.awaitUiInputRelease();
   }
 
   void _releaseModalInput() {
     _inputCapture.update(false);
+    _recordMovementActivity();
+  }
+
+  void _recordMovementActivity() {
+    if (!_controlsHintIdle.recordActivity() || !mounted) return;
+    setState(() {});
+  }
+
+  void _updateControlsHint() {
+    if (!mounted || _inputCapture.isCaptured || _switchingWorld) return;
+    if (_controlsHintIdle.advance(_uiPollInterval)) setState(() {});
   }
 
   MinimapViewState _createMinimapState({renderer.MinimapSnapshot? snapshot}) {
@@ -358,160 +369,165 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
     }
   }
 
-  WorldLibraryCallbacks _worldCallbacks(
-    BuildContext dialogContext,
-  ) => WorldLibraryCallbacks(
-    onCreate: (name, seed, presetChoice) async {
-      final preset = switch (presetChoice) {
-        WorldLibraryPreset.classic => LaunchWorldPreset.classic,
-        WorldLibraryPreset.flat => LaunchWorldPreset.flat,
-        WorldLibraryPreset.islands => LaunchWorldPreset.islands,
-      };
-      final document = await _createWorld(
-        name,
-        seed ?? kDefaultWorldSeed,
-        preset: preset,
-      );
-      await _refreshWorlds();
-      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-      await _switchWorld(document);
-    },
-    onImport: () async {
-      final file = await openFile(
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'Minedart world', extensions: ['mdrt']),
-        ],
-      );
-      if (file == null) return;
-      final importedAt = DateTime.now().toUtc();
-      await widget.repository.importBytes(
-        Uint8List.fromList(await file.readAsBytes()),
-        legacyMetadata: WorldMetadata(
-          id: _newWorldId(importedAt),
-          name: importedWorldName(file.name),
-          seed: 0,
-          createdAt: importedAt,
-          updatedAt: importedAt,
-          spawn: const WorldSpawn.origin(),
-        ),
-      );
-      await _refreshWorlds();
-    },
-    onLoad: (entry) async {
-      final document = await widget.repository.load(entry.id);
-      if (document == null) return;
-      if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-      await _switchWorld(document);
-    },
-    onRename: (entry, name) async {
-      final isCurrent = entry.id == _runtime.worldId;
-      if (isCurrent) await _runtime.autosaver.saveNow();
-      final renamed = await widget.repository.rename(entry.id, name);
-      if (isCurrent && renamed != null) {
-        _runtime.autosaver.replaceMetadata(renamed.metadata);
-      }
-      await _refreshWorlds();
-    },
-    onDuplicate: (entry) async {
-      if (entry.id == _runtime.worldId) {
-        await _runtime.autosaver.saveNow();
-      }
-      final now = DateTime.now().toUtc();
-      final source = await widget.repository.load(entry.id);
-      if (source == null) return;
-      await widget.repository.duplicate(
-        entry.id,
-        WorldMetadata(
-          id: duplicateWorldId(
-            sourceId: entry.id,
-            seed: entry.seed,
-            nonce: now.microsecondsSinceEpoch,
-          ),
-          name: '${entry.name} Copy',
-          seed: entry.seed,
-          createdAt: now,
-          updatedAt: now,
-          spawn: source.metadata.spawn,
-        ),
-      );
-      await _refreshWorlds();
-    },
-    onDelete: (entry) async {
-      final deletingCurrent = entry.id == _runtime.worldId;
-      if (deletingCurrent) {
-        final remaining = (await widget.repository.list())
-            .where((summary) => summary.id != entry.id)
-            .toList();
-        var replacement = remaining.isEmpty
-            ? await _createWorld('Classic World', kDefaultWorldSeed)
-            : await widget.repository.load(remaining.first.id);
-        replacement ??= await _createWorld('Classic World', kDefaultWorldSeed);
-        await _switchWorld(replacement, saveCurrent: false);
-      }
-      await widget.repository.delete(entry.id);
-      await _refreshWorlds();
-      if (deletingCurrent && dialogContext.mounted) {
-        Navigator.of(dialogContext).pop();
-      }
-    },
-    onReset: (entry) async {
-      final world = generatePresetWorld(entry.seed, presetForWorldId(entry.id));
-      final resettingCurrent = entry.id == _runtime.worldId;
-      final oldRuntime = _runtime;
-      if (resettingCurrent) await oldRuntime.autosaver.saveNow();
-      final current = await widget.repository.load(entry.id);
-      if (current == null) return;
-      final reset = WorldDocument.fromWorld(
-        metadata: current.metadata.copyWith(
-          updatedAt: DateTime.now().toUtc(),
-          spawn: defaultWorldSpawn(world),
-        ),
-        world: world,
-      );
-      try {
-        if (resettingCurrent) {
-          await oldRuntime.autosaver.stopAndWait();
-        }
-        await widget.repository.save(reset);
-        await _refreshWorlds();
-        if (resettingCurrent) {
-          await _switchWorld(reset, force: true, saveCurrent: false);
+  WorldLibraryCallbacks _worldCallbacks(BuildContext dialogContext) =>
+      WorldLibraryCallbacks(
+        onCreate: (name, seed, presetChoice) async {
+          final preset = switch (presetChoice) {
+            WorldLibraryPreset.classic => LaunchWorldPreset.classic,
+            WorldLibraryPreset.flat => LaunchWorldPreset.flat,
+            WorldLibraryPreset.islands => LaunchWorldPreset.islands,
+          };
+          final document = await _createWorld(
+            name,
+            resolveOptionalWorldSeed(seed),
+            preset: preset,
+          );
+          await _refreshWorlds();
           if (dialogContext.mounted) Navigator.of(dialogContext).pop();
-        }
-      } on Object {
-        if (resettingCurrent && identical(_runtime, oldRuntime)) {
-          await widget.repository.save(current);
-          oldRuntime.autosaver.start();
-        }
-        rethrow;
-      }
-    },
-    onExport: (entry) async {
-      if (entry.id == _runtime.worldId) {
-        await _runtime.autosaver.saveNow();
-      }
-      final bytes = await widget.repository.exportBytes(entry.id);
-      final location = await getSaveLocation(
-        suggestedName: '${_safeFileName(entry.name)}.mdrt',
-        acceptedTypeGroups: const [
-          XTypeGroup(label: 'Minedart world', extensions: ['mdrt']),
-        ],
+          await _switchWorld(document);
+        },
+        onImport: () async {
+          final file = await openFile(
+            acceptedTypeGroups: const [
+              XTypeGroup(label: 'Minedart world', extensions: ['mdrt']),
+            ],
+          );
+          if (file == null) return;
+          final importedAt = DateTime.now().toUtc();
+          await widget.repository.importBytes(
+            Uint8List.fromList(await file.readAsBytes()),
+            legacyMetadata: WorldMetadata(
+              id: _newWorldId(importedAt),
+              name: importedWorldName(file.name),
+              seed: 0,
+              createdAt: importedAt,
+              updatedAt: importedAt,
+              spawn: const WorldSpawn.origin(),
+            ),
+          );
+          await _refreshWorlds();
+        },
+        onLoad: (entry) async {
+          final document = await widget.repository.load(entry.id);
+          if (document == null) return;
+          if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+          await _switchWorld(document);
+        },
+        onRename: (entry, name) async {
+          final isCurrent = entry.id == _runtime.worldId;
+          if (isCurrent) await _runtime.autosaver.saveNow();
+          final renamed = await widget.repository.rename(entry.id, name);
+          if (isCurrent && renamed != null) {
+            _runtime.autosaver.replaceMetadata(renamed.metadata);
+          }
+          await _refreshWorlds();
+        },
+        onDuplicate: (entry) async {
+          if (entry.id == _runtime.worldId) {
+            await _runtime.autosaver.saveNow();
+          }
+          final now = DateTime.now().toUtc();
+          final source = await widget.repository.load(entry.id);
+          if (source == null) return;
+          await widget.repository.duplicate(
+            entry.id,
+            WorldMetadata(
+              id: duplicateWorldId(
+                sourceId: entry.id,
+                seed: entry.seed,
+                nonce: now.microsecondsSinceEpoch,
+              ),
+              name: '${entry.name} Copy',
+              seed: entry.seed,
+              createdAt: now,
+              updatedAt: now,
+              spawn: source.metadata.spawn,
+            ),
+          );
+          await _refreshWorlds();
+        },
+        onDelete: (entry) async {
+          final deletingCurrent = entry.id == _runtime.worldId;
+          if (deletingCurrent) {
+            final remaining = (await widget.repository.list())
+                .where((summary) => summary.id != entry.id)
+                .toList();
+            var replacement = remaining.isEmpty
+                ? await _createWorld('Classic World', generateRandomWorldSeed())
+                : await widget.repository.load(remaining.first.id);
+            replacement ??= await _createWorld(
+              'Classic World',
+              generateRandomWorldSeed(),
+            );
+            await _switchWorld(replacement, saveCurrent: false);
+          }
+          await widget.repository.delete(entry.id);
+          await _refreshWorlds();
+          if (deletingCurrent && dialogContext.mounted) {
+            Navigator.of(dialogContext).pop();
+          }
+        },
+        onReset: (entry) async {
+          final world = generatePresetWorld(
+            entry.seed,
+            presetForWorldId(entry.id),
+          );
+          final resettingCurrent = entry.id == _runtime.worldId;
+          final oldRuntime = _runtime;
+          if (resettingCurrent) await oldRuntime.autosaver.saveNow();
+          final current = await widget.repository.load(entry.id);
+          if (current == null) return;
+          final reset = WorldDocument.fromWorld(
+            metadata: current.metadata.copyWith(
+              updatedAt: DateTime.now().toUtc(),
+              spawn: defaultWorldSpawn(world),
+            ),
+            world: world,
+          );
+          try {
+            if (resettingCurrent) {
+              await oldRuntime.autosaver.stopAndWait();
+            }
+            await widget.repository.save(reset);
+            await _refreshWorlds();
+            if (resettingCurrent) {
+              await _switchWorld(reset, force: true, saveCurrent: false);
+              if (dialogContext.mounted) Navigator.of(dialogContext).pop();
+            }
+          } on Object {
+            if (resettingCurrent && identical(_runtime, oldRuntime)) {
+              await widget.repository.save(current);
+              oldRuntime.autosaver.start();
+            }
+            rethrow;
+          }
+        },
+        onExport: (entry) async {
+          if (entry.id == _runtime.worldId) {
+            await _runtime.autosaver.saveNow();
+          }
+          final bytes = await widget.repository.exportBytes(entry.id);
+          final location = await getSaveLocation(
+            suggestedName: '${_safeFileName(entry.name)}.mdrt',
+            acceptedTypeGroups: const [
+              XTypeGroup(label: 'Minedart world', extensions: ['mdrt']),
+            ],
+          );
+          if (location == null) return;
+          await XFile.fromData(
+            bytes,
+            mimeType: 'application/octet-stream',
+            name: '${_safeFileName(entry.name)}.mdrt',
+          ).saveTo(location.path);
+        },
+        onShareSeed: (entry) async {
+          final uri = ShowcaseLaunchConfig(
+            seed: entry.seed,
+            preset: presetForWorldId(entry.id),
+          ).shareUri(Uri.base);
+          await Clipboard.setData(ClipboardData(text: uri.toString()));
+        },
       );
-      if (location == null) return;
-      await XFile.fromData(
-        bytes,
-        mimeType: 'application/octet-stream',
-        name: '${_safeFileName(entry.name)}.mdrt',
-      ).saveTo(location.path);
-    },
-    onShareSeed: (entry) async {
-      final uri = ShowcaseLaunchConfig(
-        seed: entry.seed,
-        preset: presetForWorldId(entry.id),
-      ).shareUri(Uri.base);
-      await Clipboard.setData(ClipboardData(text: uri.toString()));
-    },
-  );
 
   Future<WorldDocument> _createWorld(
     String name,
@@ -578,7 +594,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
       _detachGame(old.game);
       setState(() {
         _runtime = next;
-        _showStartupControls = true;
+        _controlsHintIdle.reset();
       });
       _minimap.value = _createMinimapState();
       _attachGame(next.game);
@@ -674,7 +690,7 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
                 child: Focus(autofocus: true, child: gameWidget),
               ),
               MinimapOverlay(state: _minimap),
-              if (_showStartupControls) const _StartupControlsOverlay(),
+              if (_controlsHintIdle.visible) const _StartupControlsOverlay(),
               if (_switchingWorld)
                 const ColoredBox(
                   color: Color(0x99000000),
