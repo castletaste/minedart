@@ -58,7 +58,11 @@ CDN, copies the Cloudflare `_headers` file, and checks the current Pages limits.
 
 ## Cloudflare Pages deployment
 
-The manual GitHub Actions workflow at `.github/workflows/deploy-web.yml` expects:
+`.github/workflows/deploy-web.yml` verifies every pull request and every push
+to `main`: core and app analysis and tests, the browser-only app suites in
+Chrome, and the verified Wasm release build. The deployment job runs only on a
+manual `workflow_dispatch` run, so no push can publish to production on its
+own. It expects:
 
 - a Direct Upload Pages project named `castletaste-minedart` with production
   branch `main`;
@@ -66,7 +70,7 @@ The manual GitHub Actions workflow at `.github/workflows/deploy-web.yml` expects
 - repository secrets `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; the
   token only needs `Account > Cloudflare Pages > Edit`.
 
-The workflow is intentionally manual. Creating the Pages project, configuring
+Deployment stays intentionally manual. Creating the Pages project, configuring
 DNS/secrets, and running the first deployment are external production actions.
 
 After deployment, verify that the document response includes

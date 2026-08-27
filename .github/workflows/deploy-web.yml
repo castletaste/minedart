@@ -1,6 +1,7 @@
-name: Deploy Minedart web
+name: Verify and deploy Minedart web
 
 on:
+  pull_request:
   push:
     branches:
       - main
@@ -9,8 +10,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: minedart-cloudflare-pages-production
-  cancel-in-progress: false
+  group: minedart-web-${{ github.event_name == 'workflow_dispatch' && 'cloudflare-pages-production' || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -84,6 +85,10 @@ jobs:
         working-directory: app
         run: flutter test
 
+      - name: Test browser-only app suites in Chrome
+        working-directory: app
+        run: flutter test --platform chrome test/input/browser_pointer_lock_web_test.dart
+
       - name: Build and verify Wasm release
         working-directory: app
         run: bash tool/build_web_release.sh
@@ -100,6 +105,7 @@ jobs:
   deploy:
     name: Deploy verified bundle
     needs: build
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
