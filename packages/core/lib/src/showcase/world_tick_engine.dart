@@ -98,40 +98,147 @@ final class WorldTickEngine {
       for (var localIndex = 0; localIndex < ChunkIndex.volume; localIndex++) {
         final raw = chunk.blocks[localIndex];
         final behavior = _behaviorForRaw(raw);
-        if (behavior != BlockBehavior.water &&
-            behavior != BlockBehavior.lava &&
-            behavior != BlockBehavior.sponge) {
+        if (behavior == BlockBehavior.plain ||
+            behavior == BlockBehavior.plant) {
           continue;
         }
         final (x, y, z) = _worldCoordinates(chunk, localIndex);
-        if (behavior == BlockBehavior.sponge) {
-          _activeSponges.add(worldPositionKey(x, y, z));
-          if (_hasWaterNearby(world, x, y, z)) {
-            _scheduleGeneric(x, y, z);
-          }
-          continue;
-        }
+        // Sponges beside loaded water are already covered by the shared rule;
+        // scheduling the water side too would report a settled world as busy.
+        _scheduleUnsettledCell(
+          world,
+          x,
+          y,
+          z,
+          raw,
+          markRetry: true,
+          includeSpongeCheck: false,
+        );
+      }
+    }
+    _spongeIndexInitialized = true;
+    return _scheduled.length - before;
+  }
+
+  /// Re-arms bounded simulation around voxel writes this engine did not make.
+  ///
+  /// Undo/redo replays raw voxels straight into [VoxelWorld], so every touched
+  /// cell and its face neighbors must be re-examined against the same rule
+  /// [prime] uses. Without this, a replayed liquid, unsupported falling block,
+  /// or lit fuse would stay frozen until an unrelated edit happened to wake it.
+  /// Returns the number of active entries added by this call.
+  int rearm(VoxelWorld world, WorldChangeSet changes) {
+    final before = _scheduled.length;
+    final visited = <int>{};
+    for (final change in changes.changes) {
+      _rearmCell(world, change.x, change.y, change.z, visited);
+      for (final offset in _faceOffsets) {
+        _rearmCell(
+          world,
+          change.x + offset.$1,
+          change.y + offset.$2,
+          change.z + offset.$3,
+          visited,
+        );
+      }
+    }
+    return _scheduled.length - before;
+  }
+
+  void _rearmCell(VoxelWorld world, int x, int y, int z, Set<int> visited) {
+    if (!VoxelWorld.inBounds(x, y, z)) return;
+    if (!visited.add(worldPositionKey(x, y, z))) return;
+    _scheduleUnsettledCell(
+      world,
+      x,
+      y,
+      z,
+      world.blockAt(x, y, z),
+      markRetry: true,
+    );
+  }
+
+  /// Schedules one cell when its current state can still change on its own.
+  ///
+  /// This is the single definition of "unsettled" shared by load priming,
+  /// bounded retry promotion, and history replay, so all three re-arm the same
+  /// work for the same world state.
+  bool _scheduleUnsettledCell(
+    VoxelWorld world,
+    int x,
+    int y,
+    int z,
+    int raw, {
+    required bool markRetry,
+    bool includeSpongeCheck = true,
+  }) {
+    final key = worldPositionKey(x, y, z);
+    switch (_behaviorForRaw(raw)) {
+      case BlockBehavior.water:
+      case BlockBehavior.lava:
         if (!_needsFluidUpdate(
           world,
           x,
           y,
           z,
           raw,
-          includeSpongeCheck: false,
+          includeSpongeCheck: includeSpongeCheck,
         )) {
-          continue;
+          return false;
         }
-        _scheduleLiquid(
-          x,
-          y,
-          z,
-          Blocks.id(raw),
-          _currentTick + _fluidDelay(Blocks.id(raw)),
+        final id = Blocks.id(raw);
+        return _scheduleKey(
+          key,
+          expectedLiquidId: id,
+          dueTick: _currentTick + _fluidDelay(id),
+          markRetry: markRetry,
         );
-      }
+      case BlockBehavior.falling:
+        if (y == 0 || Blocks.id(world.blockAt(x, y - 1, z)) != Blocks.air) {
+          return false;
+        }
+        return _scheduleKey(
+          key,
+          expectedLiquidId: _genericIdentity,
+          dueTick: _currentTick + 1,
+          markRetry: markRetry,
+        );
+      case BlockBehavior.sponge:
+        _activeSponges.add(key);
+        if (!_hasWaterNearby(world, x, y, z)) return false;
+        return _scheduleKey(
+          key,
+          expectedLiquidId: _genericIdentity,
+          dueTick: _currentTick + 1,
+          markRetry: markRetry,
+        );
+      case BlockBehavior.tnt:
+        if (!_armPersistedTntFuse(key, raw)) return false;
+        return _scheduleKey(
+          key,
+          expectedLiquidId: _genericIdentity,
+          dueTick: _currentTick + 1,
+          markRetry: markRetry,
+        );
+      case BlockBehavior.plain:
+      case BlockBehavior.plant:
+        return false;
     }
-    _spongeIndexInitialized = true;
-    return _scheduled.length - before;
+  }
+
+  /// Reports whether this TNT still owes an explosion, restoring the countdown
+  /// from persisted metadata when the in-memory fuse is gone.
+  ///
+  /// [_tickTnt] writes elapsed fuse ticks into metadata, so a lit charge stays
+  /// lit across a save/load or a history replay. A live countdown always wins,
+  /// and an over-elapsed fuse resolves on the next tick rather than never.
+  bool _armPersistedTntFuse(int key, int raw) {
+    if (_tntFuses.containsKey(key)) return true;
+    final elapsed = Blocks.meta(raw);
+    if (elapsed <= 0) return false;
+    final remaining = tntFuseTicks - elapsed;
+    _tntFuses[key] = remaining > 1 ? remaining : 1;
+    return true;
   }
 
   /// Starts a TNT fuse at this coordinate. Ordinary neighbor scheduling does
@@ -959,42 +1066,7 @@ final class WorldTickEngine {
         final behavior = _behaviorForRaw(raw);
         final (x, y, z) = _worldCoordinates(chunk, localIndex);
         _reconcileSpongeState(world, x, y, z, behavior);
-        if (behavior == BlockBehavior.water || behavior == BlockBehavior.lava) {
-          if (_needsFluidUpdate(world, x, y, z, raw)) {
-            _scheduleKey(
-              worldPositionKey(x, y, z),
-              expectedLiquidId: Blocks.id(raw),
-              dueTick: _currentTick + _fluidDelay(Blocks.id(raw)),
-              markRetry: false,
-            );
-          }
-        } else if (behavior == BlockBehavior.falling) {
-          if (y > 0 && Blocks.id(world.blockAt(x, y - 1, z)) == Blocks.air) {
-            _scheduleKey(
-              worldPositionKey(x, y, z),
-              expectedLiquidId: _genericIdentity,
-              dueTick: _currentTick + 1,
-              markRetry: false,
-            );
-          }
-        } else if (behavior == BlockBehavior.sponge) {
-          if (_hasWaterNearby(world, x, y, z)) {
-            _scheduleKey(
-              worldPositionKey(x, y, z),
-              expectedLiquidId: _genericIdentity,
-              dueTick: _currentTick + 1,
-              markRetry: false,
-            );
-          }
-        } else if (behavior == BlockBehavior.tnt &&
-            _tntFuses.containsKey(worldPositionKey(x, y, z))) {
-          _scheduleKey(
-            worldPositionKey(x, y, z),
-            expectedLiquidId: _genericIdentity,
-            dueTick: _currentTick + 1,
-            markRetry: false,
-          );
-        }
+        _scheduleUnsettledCell(world, x, y, z, raw, markRetry: false);
         if (_scheduled.length >= maxQueue &&
             localIndex + 1 < ChunkIndex.volume) {
           _markRetryChunk(chunkIndex);

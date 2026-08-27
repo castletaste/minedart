@@ -869,6 +869,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       hud.recordAction('$action none');
       return;
     }
+    // Undo/redo replays raw voxels, so the cleared scheduler has to re-arm the
+    // simulation the replayed topology still owes. Consequences of that work
+    // belong to the next user cascade, not to the group just replayed.
+    worldTicks.rearm(voxelWorld, changes);
+    _suppressPrimedTickHistory = !worldTicks.isIdle;
     remeshDirty(changes.dirtyChunks);
     hud.recordAction('$action ${changes.changes.length}');
   }

@@ -881,6 +881,103 @@ void main() {
     expect(engine.pendingCount, 2);
     expect(engine.droppedUpdates, 1);
   });
+
+  test('replayed liquid keeps flowing after undo and redo', () {
+    final world = VoxelWorld();
+    _fillFloor(world, centerX: 40, centerZ: 40, radius: 5);
+    final engine = WorldTickEngine();
+    final history = EditHistory();
+
+    final placed = WorldChangeSetBuilder(world);
+    placed.set(40, 1, 40, Blocks.water);
+    history.record(placed.build());
+    engine.enqueueAround(40, 1, 40);
+
+    // Undo and redo land before the cascade runs, which is the case that used
+    // to restore a source voxel with no scheduled work behind it.
+    final undone = _replay(history, engine, world, redo: false);
+    expect(undone.isEmpty, isFalse);
+    expect(world.blockAt(40, 1, 40), Blocks.air);
+
+    final redone = _replay(history, engine, world, redo: true);
+    expect(redone.isEmpty, isFalse);
+    expect(Blocks.id(world.blockAt(40, 1, 40)), Blocks.water);
+    expect(
+      engine.isIdle,
+      isFalse,
+      reason: 'a replayed source still owes its flow',
+    );
+
+    _drain(engine, world, budget: 256, maxTicks: 300);
+    expect(
+      _liquidCount(world, Blocks.water, 35, 45, 1, 35, 45),
+      greaterThan(1),
+      reason: 'the replayed source must spread like a fresh one',
+    );
+  });
+
+  test('replayed unsupported falling block resumes falling', () {
+    final world = VoxelWorld()..setBlock(8, 0, 8, Blocks.stone);
+    final engine = WorldTickEngine();
+    final history = EditHistory();
+
+    final placed = WorldChangeSetBuilder(world);
+    placed.set(8, 6, 8, Blocks.sand);
+    history.record(placed.build());
+    engine.enqueueAround(8, 6, 8);
+
+    _replay(history, engine, world, redo: false);
+    expect(world.blockAt(8, 6, 8), Blocks.air);
+
+    // Redo puts the sand back in mid-air with nothing beneath it.
+    _replay(history, engine, world, redo: true);
+    expect(world.blockAt(8, 6, 8), Blocks.sand);
+    expect(
+      engine.isIdle,
+      isFalse,
+      reason: 'an unsupported replayed block must be scheduled',
+    );
+
+    _drain(engine, world, budget: 256, maxTicks: 300);
+    expect(world.blockAt(8, 6, 8), Blocks.air);
+    expect(world.blockAt(8, 1, 8), Blocks.sand);
+  });
+
+  test('a lit fuse survives a reload and still explodes', () {
+    final world = VoxelWorld()
+      ..setBlock(20, 1, 20, Blocks.tnt)
+      ..setBlock(21, 1, 20, Blocks.dirt);
+    final engine = WorldTickEngine(tntFuseTicks: 4);
+    expect(engine.activateTnt(world, 20, 1, 20), isTrue);
+
+    // Burn one frame so elapsed fuse ticks reach persisted metadata.
+    _advance(engine, world, 2);
+    expect(Blocks.id(world.blockAt(20, 1, 20)), Blocks.tnt);
+    expect(Blocks.meta(world.blockAt(20, 1, 20)), greaterThan(0));
+
+    // A reload keeps voxels but drops in-memory scheduler state.
+    final reloaded = WorldTickEngine(tntFuseTicks: 4);
+    expect(reloaded.prime(world), greaterThan(0));
+    expect(reloaded.primedTntCount, 1);
+
+    _drain(reloaded, world, budget: 256, maxTicks: 300);
+    expect(world.blockAt(20, 1, 20), Blocks.air);
+    expect(world.blockAt(21, 1, 20), Blocks.air);
+  });
+
+  test('rearm leaves an already settled world idle', () {
+    final world = VoxelWorld();
+    _fillFloor(world, centerX: 40, centerZ: 40, radius: 5);
+    final engine = WorldTickEngine();
+
+    final placed = WorldChangeSetBuilder(world);
+    placed.set(40, 1, 40, Blocks.stone);
+    final changes = placed.build();
+
+    engine.clear();
+    expect(engine.rearm(world, changes), 0);
+    expect(engine.isIdle, isTrue);
+  });
 }
 
 VoxelWorld _fluidFixture() {
@@ -966,6 +1063,19 @@ void _advance(
   for (var tick = 0; tick < ticks; tick++) {
     engine.tick(world, budget);
   }
+}
+
+/// Replays history the way the app does: a cleared scheduler plus [rearm].
+WorldChangeSet _replay(
+  EditHistory history,
+  WorldTickEngine engine,
+  VoxelWorld world, {
+  required bool redo,
+}) {
+  engine.clear();
+  final applied = redo ? history.redo(world) : history.undo(world);
+  engine.rearm(world, applied);
+  return applied;
 }
 
 void _drain(
