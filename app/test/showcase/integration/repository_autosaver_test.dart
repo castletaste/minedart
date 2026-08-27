@@ -100,6 +100,35 @@ void main() {
     await autosaver.stopAndWait();
     expect(store.writeCalls, 2);
   });
+
+  test('a stopped autosaver stays restartable after a failed save', () async {
+    final store = _FailingStore();
+    final now = DateTime.utc(2026, 8, 24);
+    final autosaver = RepositoryAutosaver(
+      repository: StoredWorldRepository(store),
+      world: VoxelWorld()..seed = 11,
+      metadata: WorldMetadata(
+        id: 'rollback-world',
+        name: 'Rollback',
+        seed: 11,
+        createdAt: now,
+        updatedAt: now,
+        spawn: const WorldSpawn.origin(),
+      ),
+      readSpawn: () => const WorldSpawn.origin(),
+      onError: (_, _) {},
+    )..start();
+
+    // A reset tears the autosaver down before rewriting storage.
+    await autosaver.stopAndWait();
+    expect(autosaver.isRunning, isFalse);
+
+    // Rolling back must restore a live autosaver, otherwise the session
+    // silently continues with no periodic saves at all.
+    autosaver.start();
+    expect(autosaver.isRunning, isTrue);
+    await autosaver.stopAndWait();
+  });
 }
 
 final class _FailingStore implements WorldByteStore {

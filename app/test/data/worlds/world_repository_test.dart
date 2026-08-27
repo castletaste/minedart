@@ -150,5 +150,29 @@ void main() {
         expect(loaded.blocks[0], Blocks.dirt);
       },
     );
+
+    test(
+      'concurrent writes to one world never share a temp file',
+      () async {
+        final native = NativeWorldRepository(root);
+        await native.create(document('shared', 'First', block: Blocks.stone));
+
+        await Future.wait<void>(<Future<void>>[
+          native.save(document('shared', 'A', block: Blocks.dirt)),
+          native.save(document('shared', 'B', block: Blocks.grass)),
+          native.save(document('shared', 'C', block: Blocks.brick)),
+        ]);
+
+        // Every writer must land a complete, decodable document and leave no
+        // partially written scratch file behind.
+        final leftovers = await root
+            .list()
+            .where((entity) => entity.path.endsWith('.tmp'))
+            .toList();
+        expect(leftovers, isEmpty);
+        final loaded = await native.load('shared');
+        expect(loaded, isNotNull);
+      },
+    );
   });
 }

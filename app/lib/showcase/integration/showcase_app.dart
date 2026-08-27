@@ -415,10 +415,20 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
         },
         onRename: (entry, name) async {
           final isCurrent = entry.id == _runtime.worldId;
-          if (isCurrent) await _runtime.autosaver.saveNow();
-          final renamed = await widget.repository.rename(entry.id, name);
-          if (isCurrent && renamed != null) {
-            _runtime.autosaver.replaceMetadata(renamed.metadata);
+          // Renaming the current world loads and rewrites it, so an autosave
+          // firing between those awaits would republish the old metadata and
+          // undo the rename. Hold the timer until the new name is adopted.
+          final runtime = _runtime;
+          if (isCurrent) await runtime.autosaver.stopAndWait();
+          try {
+            final renamed = await widget.repository.rename(entry.id, name);
+            if (isCurrent && renamed != null) {
+              runtime.autosaver.replaceMetadata(renamed.metadata);
+            }
+          } finally {
+            if (isCurrent && identical(_runtime, runtime)) {
+              runtime.autosaver.start();
+            }
           }
           await _refreshWorlds();
         },
@@ -496,10 +506,21 @@ final class _ShowcaseAppState extends State<ShowcaseApp> {
             }
           } on Object {
             if (resettingCurrent && identical(_runtime, oldRuntime)) {
-              await widget.repository.save(current);
-              oldRuntime.autosaver.start();
+              try {
+                await widget.repository.save(current);
+              } on Object catch (error, stackTrace) {
+                debugPrint('World reset rollback failed: $error\n$stackTrace');
+              }
             }
             rethrow;
+          } finally {
+            // The autosaver was stopped before the destructive write. If this
+            // runtime is still current it must end up armed again, even when
+            // both the reset and its rollback failed; otherwise the session
+            // silently continues with no periodic saves.
+            if (resettingCurrent && identical(_runtime, oldRuntime)) {
+              oldRuntime.autosaver.start();
+            }
           }
         },
         onExport: (entry) async {

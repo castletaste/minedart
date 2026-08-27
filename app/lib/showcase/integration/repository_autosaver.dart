@@ -33,6 +33,9 @@ final class RepositoryAutosaver {
 
   WorldMetadata get metadata => _metadata;
 
+  /// Whether periodic and lifecycle saves are currently armed.
+  bool get isRunning => _timer != null;
+
   /// Keeps repository-side metadata changes (for example a rename) from
   /// being overwritten by the next runtime snapshot.
   void replaceMetadata(WorldMetadata metadata) {

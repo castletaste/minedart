@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:minedart/data/worlds/gzip_codec.dart';
 import 'package:minedart/data/worlds/mdrt_codec.dart';
 import 'package:minedart/data/worlds/world_models.dart';
 import 'package:minedart_core/src/block.dart';
@@ -128,5 +129,23 @@ void main() {
       ),
       throwsA(isA<FormatException>()),
     );
+  });
+
+  test('gzip inflation stops at the world payload ceiling', () async {
+    // The old decoder also rejected this document, but only after inflating
+    // every byte. The bound must therefore be observable on the decoder API:
+    // an oversized stream fails, while a payload at the limit still decodes.
+    const bombLength = 512 * 1024 * 1024;
+    final bomb = Uint8List.fromList(gzip.encode(Uint8List(bombLength)));
+    expect(bomb.length, lessThan(1024 * 1024));
+    const worldBytes = WorldDocument.blockCount * 2;
+
+    await expectLater(
+      gzipDecode(bomb, maxLength: worldBytes),
+      throwsA(isA<FormatException>()),
+    );
+
+    final exact = Uint8List.fromList(gzip.encode(Uint8List(worldBytes)));
+    expect(await gzipDecode(exact, maxLength: worldBytes), hasLength(worldBytes));
   });
 }

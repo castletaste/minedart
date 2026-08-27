@@ -30,6 +30,7 @@ final class _NativeWorldByteStore implements WorldByteStore {
   _NativeWorldByteStore(this.root);
 
   final Directory root;
+  int _scratchNonce = 0;
 
   @override
   Future<List<String>> keys() async {
@@ -59,9 +60,17 @@ final class _NativeWorldByteStore implements WorldByteStore {
   Future<void> write(String id, Uint8List bytes) async {
     final file = _fileFor(id);
     await root.create(recursive: true);
-    final temp = File('${file.path}.tmp');
-    await temp.writeAsBytes(bytes, flush: true);
-    await temp.rename(file.path);
+    // Concurrent writers to one world must not share a scratch path, or one
+    // writer renames a file the other is still filling and publishes a torn
+    // document. The rename itself stays atomic per writer.
+    final temp = File('${file.path}.${_scratchNonce++}.tmp');
+    try {
+      await temp.writeAsBytes(bytes, flush: true);
+      await temp.rename(file.path);
+    } on Object {
+      if (await temp.exists()) await temp.delete();
+      rethrow;
+    }
   }
 
   @override

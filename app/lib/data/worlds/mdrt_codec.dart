@@ -161,7 +161,10 @@ final class MdrtCodec {
   }
 
   static Future<Uint16List> _decodeBlocks(Uint8List compressed) async {
-    final raw = await gzipDecode(compressed);
+    // The inflated size is a fixed contract, so anything larger is hostile or
+    // corrupt. Bounding decompression keeps a small gzip bomb from exhausting
+    // memory before the length check below can reject it.
+    final raw = await gzipDecode(compressed, maxLength: _blockByteLength);
     if (raw.length != _blockByteLength) {
       throw const FormatException('Unexpected world block payload length');
     }
