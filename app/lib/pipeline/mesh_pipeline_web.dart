@@ -45,6 +45,8 @@ class MeshPipeline implements MeshPipelineBase {
   MeshPipelineActivity _activity;
   @override
   MainThreadMeshTimeObserver? onMainThreadMeshTime;
+  @override
+  MeshFailureObserver? onMeshFailure;
   Timer? _scheduledDrain;
   bool _draining = false;
   bool _disposed = false;
@@ -136,10 +138,15 @@ class MeshPipeline implements MeshPipelineBase {
     ChunkMeshData data;
     try {
       data = _meshChunk(job.snapshot);
-    } on Object {
+    } on Object catch (error, stackTrace) {
       final outcome = _queue.fail(request);
       if (outcome == MeshFailureOutcome.retryLimitReached) {
         _forgetJob(request.chunkIndex, request.generation);
+        // The chunk is abandoned. Tell the consumer so it can drop its own
+        // bookkeeping; otherwise this chunk is never scheduled again.
+        if (!_disposed) {
+          onMeshFailure?.call(request.chunkIndex, error, stackTrace);
+        }
       }
       return;
     }
@@ -166,6 +173,7 @@ class MeshPipeline implements MeshPipelineBase {
     _queue.dispose();
     _jobs.clear();
     onMainThreadMeshTime = null;
+    onMeshFailure = null;
     _sliceStopwatch.stop();
     _results.close();
   }

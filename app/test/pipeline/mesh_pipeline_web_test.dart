@@ -104,6 +104,33 @@ void main() {
       },
     );
 
+    test('reports a chunk abandoned after its retries are exhausted', () async {
+      final scheduler = _ManualDrainScheduler();
+      final failures = <int>[];
+      final pipeline = MeshPipeline(
+        scheduleDrain: scheduler.schedule,
+        meshChunk: (snapshot) {
+          if (snapshot.chunkIndex == 1) {
+            throw StateError('permanent mesh failure');
+          }
+          return _emptyMesh(snapshot);
+        },
+      )..onMeshFailure = (chunkIndex, _, _) => failures.add(chunkIndex);
+      final results = pipeline.results.toList();
+
+      pipeline.request(_job(index: 1, priority: 1));
+      pipeline.request(_job(index: 2, priority: 100));
+      scheduler.drain();
+
+      // The consumer must learn about chunk 1 exactly once, or its request
+      // gate stays set and the chunk is never scheduled again.
+      expect(failures, <int>[1]);
+      expect(pipeline.pendingCount, 0);
+      pipeline.dispose();
+      expect((await results).map((mesh) => mesh.chunkIndex), <int>[2]);
+      expect(pipeline.onMeshFailure, isNull);
+    });
+
     test(
       'drops an in-flight result superseded by a newer generation',
       () async {

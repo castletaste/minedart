@@ -18,6 +18,16 @@ enum MeshPipelineActivity {
 
 typedef MainThreadMeshTimeObserver = void Function(double milliseconds);
 
+/// Reports a chunk the pipeline stopped trying to mesh.
+///
+/// A pipeline owns only the snapshot it was given. Snapshot buffers move
+/// one-way into the worker on native, so a failed attempt cannot be replayed
+/// from inside the pipeline. Consumers hold the authoritative voxel world and
+/// therefore own recovery: they must release any bookkeeping that would
+/// otherwise stop the chunk from ever being requested again.
+typedef MeshFailureObserver =
+    void Function(int chunkIndex, Object error, StackTrace stackTrace);
+
 class MeshJob {
   MeshJob({required this.snapshot, required this.priority});
 
@@ -35,6 +45,10 @@ abstract interface class MeshPipelineBase {
   set activity(MeshPipelineActivity value);
   MainThreadMeshTimeObserver? get onMainThreadMeshTime;
   set onMainThreadMeshTime(MainThreadMeshTimeObserver? observer);
+
+  /// Invoked when a chunk is abandoned after its retries are exhausted.
+  MeshFailureObserver? get onMeshFailure;
+  set onMeshFailure(MeshFailureObserver? observer);
   Future<void> start();
   void request(MeshJob job);
   void dispose();

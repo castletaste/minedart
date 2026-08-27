@@ -373,6 +373,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _meshSub = pipeline.results.listen(_applyMeshResult);
     pipeline.onMainThreadMeshTime =
         frameMetrics.telemetry.accumulateMainThreadMesh;
+    pipeline.onMeshFailure = _onMeshFailure;
     if (!kIsWeb) {
       _mouseSub = _mouseLook.events.listen(
         _onMouseEvent,
@@ -393,6 +394,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _browserMouseSub?.cancel();
     _browserPointerLock.dispose();
     pipeline.onMainThreadMeshTime = null;
+    pipeline.onMeshFailure = null;
     _pendingMeshCaptures.dispose();
     unawaited(_mouseLook.close());
     renderLab.dispose();
@@ -534,8 +536,13 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
             voxelWorld.chunks[request.chunkIndex],
             request.generation,
           );
-        } on Object {
-          _pendingMeshCaptures.fail(request);
+        } on Object catch (error, stackTrace) {
+          // Capture (not meshing) failed. Retries are bounded, so release the
+          // request gate once they run out or the chunk is stranded.
+          if (_pendingMeshCaptures.fail(request) ==
+              MeshFailureOutcome.retryLimitReached) {
+            _onMeshFailure(request.chunkIndex, error, stackTrace);
+          }
           continue;
         }
         _pendingMeshCaptures.complete(request);
@@ -559,6 +566,17 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   void _forgetRequestedChunk(int chunkIndex) {
     _requestedChunks.remove(chunkIndex);
+  }
+
+  /// Releases a chunk the pipeline gave up on.
+  ///
+  /// [_requestedChunks] is the only gate that stops [_updateChunkView] from
+  /// re-requesting a chunk. A failed chunk has no rendered component, so
+  /// eviction can never clear that gate for it. Without this release the chunk
+  /// stays permanently invisible for the rest of the session.
+  void _onMeshFailure(int chunkIndex, Object error, StackTrace stackTrace) {
+    _requestedChunks.remove(chunkIndex);
+    debugPrint('Mesh failed for chunk $chunkIndex; will retry: $error');
   }
 
   void _updateMeshActivity() {

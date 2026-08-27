@@ -4,6 +4,11 @@
 /// snapshot buffers (zero-copy via TransferableTypedData); results are
 /// [ChunkMeshData]. Coalescing keeps at most one queued job per chunk;
 /// consumers drop stale results by revision (ChunkRenderManager does).
+///
+/// Every chunk is tracked by its newest requested revision. A result is
+/// published only when it still matches that revision, so an older in-flight
+/// attempt can neither clear the newer attempt's bookkeeping nor overwrite it
+/// with stale geometry.
 library;
 
 import 'dart:async';
@@ -25,10 +30,15 @@ class MeshPipeline implements MeshPipelineBase {
   final int workers;
   final _idle = <SendPort>[];
   final _isolates = <Isolate>[];
+  final _receivePorts = <ReceivePort>[];
   final _queue = <int, MeshJob>{};
   final _inFlight = <int, int>{};
+
+  /// Newest revision requested per chunk, kept until that revision resolves.
+  final _latestRevisions = <int, int>{};
   final _results = StreamController<ChunkMeshData>.broadcast();
   MeshPipelineActivity _activity;
+  bool _disposed = false;
 
   @override
   MeshPipelineActivity get activity => _activity;
@@ -38,6 +48,9 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   MainThreadMeshTimeObserver? onMainThreadMeshTime;
+
+  @override
+  MeshFailureObserver? onMeshFailure;
 
   @override
   Stream<ChunkMeshData> get results => _results.stream;
@@ -50,6 +63,7 @@ class MeshPipeline implements MeshPipelineBase {
     for (var i = 0; i < workers; i++) {
       final ready = Completer<SendPort>();
       final rp = ReceivePort();
+      _receivePorts.add(rp);
       rp.listen((msg) {
         if (msg is SendPort) {
           ready.complete(msg);
@@ -70,27 +84,42 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   void dispose() {
+    if (_disposed) return;
+    _disposed = true;
     for (final iso in _isolates) {
       iso.kill(priority: Isolate.immediate);
     }
+    for (final port in _receivePorts) {
+      port.close();
+    }
+    _receivePorts.clear();
     _isolates.clear();
     _idle.clear();
     _queue.clear();
     _inFlight.clear();
+    _latestRevisions.clear();
+    onMainThreadMeshTime = null;
+    onMeshFailure = null;
     _results.close();
   }
 
   /// Queue a remesh; keeps the newest revision per chunk.
   @override
   void request(MeshJob job) {
+    if (_disposed) return;
     final queued = _queue[job.chunkIndex];
     if (queued == null || queued.snapshot.revision <= job.snapshot.revision) {
       _queue[job.chunkIndex] = job;
+    }
+    final latest = _latestRevisions[job.chunkIndex];
+    if (latest == null || latest < job.snapshot.revision) {
+      _latestRevisions[job.chunkIndex] = job.snapshot.revision;
     }
     _pump();
   }
 
   void _pump() {
+    if (_disposed) return;
     while (_idle.isNotEmpty && _queue.isNotEmpty) {
       MeshJob? best;
       for (final j in _queue.values) {
@@ -114,12 +143,35 @@ class MeshPipeline implements MeshPipelineBase {
   }
 
   void _onResult(List msg) {
+    if (_disposed) return;
     final chunkIndex = msg[0] as int;
     final revision = msg[1] as int;
     final worker = msg[6] as SendPort;
-    _inFlight.remove(chunkIndex);
+    final failure = msg[7];
+
+    // Only the attempt that is still the newest owns this chunk's slots.
+    // An older attempt returning late must not clear a newer one.
+    if (_inFlight[chunkIndex] == revision) _inFlight.remove(chunkIndex);
     _idle.add(worker);
-    if (!_results.isClosed) {
+
+    final isLatest = _latestRevisions[chunkIndex] == revision;
+    if (isLatest) _latestRevisions.remove(chunkIndex);
+
+    if (failure != null) {
+      // The snapshot moved into the worker and cannot be replayed here. Tell
+      // the consumer so it can re-request from the authoritative world.
+      if (isLatest) {
+        onMeshFailure?.call(
+          chunkIndex,
+          StateError('mesh worker failed for chunk $chunkIndex: $failure'),
+          StackTrace.current,
+        );
+      }
+      _pump();
+      return;
+    }
+
+    if (isLatest && !_results.isClosed) {
       _results.add(
         ChunkMeshData(
           chunkIndex: chunkIndex,
@@ -160,11 +212,14 @@ void meshWorkerMain(SendPort host) {
       skyHeight: list[6] as TransferableTypedData,
     );
     ChunkMeshData mesh;
+    Object? failure;
     try {
       mesh = mesher.mesh(snapshot);
-    } on Object {
-      // Pathological chunk (e.g. vertex overflow): fall back to an empty mesh
-      // so the worker survives and the pipeline keeps flowing.
+    } on Object catch (error) {
+      // Keep the worker alive, but never publish an empty mesh as if it were
+      // real geometry: that silently deletes a chunk the player can still see.
+      // Report the failure and let the host decide whether to re-request.
+      failure = error.toString();
       mesh = ChunkMeshData(
         chunkIndex: chunkIndex,
         revision: snapshot.revision,
@@ -182,6 +237,7 @@ void meshWorkerMain(SendPort host) {
       _transfer(mesh.translucentVertices),
       _transfer(mesh.translucentIndices),
       rp.sendPort,
+      failure,
     ]);
   });
 }
