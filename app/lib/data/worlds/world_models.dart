@@ -167,6 +167,9 @@ final class WorldDocument {
     }
   }
 
+  WorldDocument._({required this.metadata, required Uint16List ownedBlocks})
+    : _blocks = ownedBlocks;
+
   factory WorldDocument.fromWorld({
     required WorldMetadata metadata,
     required VoxelWorld world,
@@ -177,7 +180,7 @@ final class WorldDocument {
       blocks.setRange(offset, offset + ChunkIndex.volume, chunk.blocks);
       offset += ChunkIndex.volume;
     }
-    return WorldDocument(metadata: metadata, blocks: blocks);
+    return WorldDocument._(metadata: metadata, ownedBlocks: blocks);
   }
 
   static const int chunkCount =
@@ -188,6 +191,10 @@ final class WorldDocument {
   final Uint16List _blocks;
 
   Uint16List get blocks => Uint16List.fromList(_blocks);
+
+  /// Zero-copy read access for serializers. The returned typed-data view
+  /// rejects every mutation and never exposes the mutable backing list.
+  Uint16List get unmodifiableBlocks => _blocks.asUnmodifiableView();
 
   /// Materializes a fresh mutable core world for the game runtime.
   VoxelWorld toVoxelWorld() {
@@ -202,11 +209,15 @@ final class WorldDocument {
     return world;
   }
 
-  WorldDocument copyWith({WorldMetadata? metadata, Uint16List? blocks}) =>
-      WorldDocument(
-        metadata: metadata ?? this.metadata,
-        blocks: blocks ?? _blocks,
-      );
+  WorldDocument copyWith({WorldMetadata? metadata, Uint16List? blocks}) {
+    if (blocks != null) {
+      return WorldDocument(metadata: metadata ?? this.metadata, blocks: blocks);
+    }
+    return WorldDocument._(
+      metadata: metadata ?? this.metadata,
+      ownedBlocks: _blocks,
+    );
+  }
 }
 
 String _string(Object? value, String field) {

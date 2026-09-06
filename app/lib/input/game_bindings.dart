@@ -1,17 +1,21 @@
 import 'package:flutter/services.dart';
 
 enum GameControl {
-  moveForward,
-  moveBackward,
-  strafeLeft,
-  strafeRight,
-  jump,
-  openInventory,
-  cycleFog,
-  storeSpawn,
-  respawn,
-  toggleNoclip,
-  debugOverlay,
+  moveForward('Move forward'),
+  moveBackward('Move backward'),
+  strafeLeft('Strafe left'),
+  strafeRight('Strafe right'),
+  jump('Jump'),
+  openInventory('Open inventory'),
+  cycleFog('Cycle fog'),
+  storeSpawn('Save Teleport'),
+  respawn('Teleport'),
+  toggleNoclip('Toggle noclip'),
+  debugOverlay('Debug overlay');
+
+  const GameControl(this.label);
+
+  final String label;
 }
 
 final class GameBindings {

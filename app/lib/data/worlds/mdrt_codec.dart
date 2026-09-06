@@ -22,14 +22,15 @@ final class MdrtCodec {
 
   static Future<Uint8List> encode(WorldDocument document) async {
     _validateMetadataId(document.metadata.id);
-    _validateBlocks(document.blocks);
+    final blocks = document.unmodifiableBlocks;
+    _validateBlocks(blocks);
     final metadata = document.metadata.copyWith(
       formatVersion: currentFormatVersion,
     );
     final jsonBytes = Uint8List.fromList(
       utf8.encode(jsonEncode(metadata.toJson())),
     );
-    final raw = Uint8List.fromList(document.blocks.buffer.asUint8List());
+    final raw = Uint8List.sublistView(blocks);
     final compressed = await gzipEncode(raw);
     final output = Uint8List(
       _mdrt2HeaderLength + jsonBytes.length + compressed.length,
@@ -74,7 +75,9 @@ final class MdrtCodec {
     final dynamic decodedJson;
     try {
       decodedJson = jsonDecode(
-        utf8.decode(bytes.sublist(_mdrt2HeaderLength, payloadOffset)),
+        utf8.decode(
+          Uint8List.sublistView(bytes, _mdrt2HeaderLength, payloadOffset),
+        ),
       );
     } on Object {
       throw const FormatException('Invalid MDRT2 metadata JSON');
@@ -90,7 +93,9 @@ final class MdrtCodec {
         'Unsupported MDRT2 format ${metadata.formatVersion}',
       );
     }
-    final raw = await _decodeBlocks(bytes.sublist(payloadOffset));
+    final raw = await _decodeBlocks(
+      Uint8List.sublistView(bytes, payloadOffset),
+    );
     return WorldDocument(metadata: metadata, blocks: raw);
   }
 
@@ -111,7 +116,9 @@ final class MdrtCodec {
     final dynamic decoded;
     try {
       decoded = jsonDecode(
-        utf8.decode(bytes.sublist(_mdrt2HeaderLength, payloadOffset)),
+        utf8.decode(
+          Uint8List.sublistView(bytes, _mdrt2HeaderLength, payloadOffset),
+        ),
       );
     } on Object {
       throw const FormatException('Invalid MDRT2 metadata JSON');
@@ -138,7 +145,9 @@ final class MdrtCodec {
     final seed = ByteData.sublistView(
       bytes,
     ).getInt64(_mdrt1Magic.length, Endian.little);
-    final raw = await _decodeBlocks(bytes.sublist(_mdrt1HeaderLength));
+    final raw = await _decodeBlocks(
+      Uint8List.sublistView(bytes, _mdrt1HeaderLength),
+    );
     final now = DateTime.now().toUtc();
     final source =
         legacyMetadata ??
@@ -161,13 +170,11 @@ final class MdrtCodec {
   }
 
   static Future<Uint16List> _decodeBlocks(Uint8List compressed) async {
-    final raw = await gzipDecode(compressed);
+    final raw = await gzipDecode(compressed, maxOutputBytes: _blockByteLength);
     if (raw.length != _blockByteLength) {
       throw const FormatException('Unexpected world block payload length');
     }
-    final blocks = Uint16List.fromList(
-      Uint16List.view(raw.buffer, raw.offsetInBytes),
-    );
+    final blocks = Uint16List.view(raw.buffer, raw.offsetInBytes);
     _validateBlocks(blocks);
     return blocks;
   }

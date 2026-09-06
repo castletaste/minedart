@@ -16,6 +16,31 @@ void main() {
     expect(dirty.contains(VoxelWorld.chunkIndexOf(0, 0, 0)), isTrue);
   });
 
+  test('invalid raw block leaves every world invariant unchanged', () {
+    final world = VoxelWorld()..setBlock(5, 20, 5, Blocks.stone);
+    final chunk = world.chunkAt(0, 1, 0);
+    final revision = chunk.revision;
+    final nonAir = chunk.nonAirCount;
+    final sky = world.skyHeight[5 + 5 * WorldDims.worldBlocksX];
+
+    expect(() => world.setBlock(5, 20, 5, Blocks.count), throwsRangeError);
+
+    expect(world.blockAt(5, 20, 5), Blocks.stone);
+    expect(chunk.revision, revision);
+    expect(chunk.nonAirCount, nonAir);
+    expect(world.skyHeight[5 + 5 * WorldDims.worldBlocksX], sky);
+  });
+
+  test('invalid raw block leaves change builder bookkeeping unchanged', () {
+    final world = VoxelWorld();
+    final builder = WorldChangeSetBuilder(world);
+
+    expect(() => builder.set(1, 2, 3, 0x0fff), throwsRangeError);
+
+    expect(builder.build().isEmpty, isTrue);
+    expect(world.blockAt(1, 2, 3), Blocks.air);
+  });
+
   test('AO halo dirties the diagonal chunk across an x-z edge', () {
     final world = VoxelWorld()
       // Keep skylight unchanged so this isolates the one-voxel block halo.

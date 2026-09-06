@@ -84,7 +84,7 @@ void main() {
           meshChunk: (snapshot) {
             attempts.add(snapshot.chunkIndex);
             final failureCount = failures[snapshot.chunkIndex] ?? 0;
-            if (snapshot.chunkIndex == 1 && failureCount < 2) {
+            if (snapshot.chunkIndex == 1 && failureCount < 1) {
               failures[snapshot.chunkIndex] = failureCount + 1;
               throw StateError('synthetic mesh failure');
             }
@@ -97,12 +97,38 @@ void main() {
         pipeline.request(_job(index: 2, priority: 100));
         scheduler.drain();
 
-        expect(attempts, <int>[1, 2, 1, 1]);
+        expect(attempts, <int>[1, 2, 1]);
         expect(pipeline.pendingCount, 0);
         pipeline.dispose();
         expect((await results).map((mesh) => mesh.chunkIndex), <int>[2, 1]);
       },
     );
+
+    test('reports a typed terminal error after one retry', () async {
+      final scheduler = _ManualDrainScheduler();
+      final pipeline = MeshPipeline(
+        scheduleDrain: scheduler.schedule,
+        meshChunk: (_) => throw StateError('synthetic terminal failure'),
+      );
+      final failure = Completer<MeshPipelineFailure>();
+      final subscription = pipeline.results.listen(
+        (_) => fail('a failed mesh must not emit an empty success'),
+        onError: (Object error) =>
+            failure.complete(error as MeshPipelineFailure),
+      );
+
+      pipeline.request(_job(index: 8));
+      scheduler.drain();
+
+      final error = await failure.future;
+      expect(error.chunkIndex, 8);
+      expect(error.generation, 1);
+      expect(error.kind, MeshPipelineFailureKind.meshing);
+      expect(error.cause, isA<StateError>());
+      expect(pipeline.pendingCount, 0);
+      await pipeline.close();
+      await subscription.cancel();
+    });
 
     test(
       'drops an in-flight result superseded by a newer generation',
@@ -215,6 +241,15 @@ void main() {
       canceledPipeline.dispose();
       canceledScheduler.drain();
       expect(canceledPipeline.pendingCount, 0);
+    });
+
+    test('paused result subscriber cannot block close', () async {
+      final pipeline = MeshPipeline();
+      final subscription = pipeline.results.listen((_) {})..pause();
+
+      await pipeline.close().timeout(const Duration(milliseconds: 100));
+
+      await subscription.cancel();
     });
   });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/showcase/render/render_settings.dart';
+import 'package:minedart_core/minedart_core.dart' show WorldDims;
 
 void main() {
   group('FogPreset', () {
@@ -14,8 +15,13 @@ void main() {
       expect(seen, FogPreset.values);
       expect(preset, FogPreset.near);
       expect(FogPreset.classic, FogPreset.far);
+      expect(FogPreset.normal.label, 'Normal');
       expect(FogPreset.far.fogStart, lessThan(FogPreset.far.fogEnd));
       expect(FogPreset.off.enabled, isFalse);
+      expect(
+        FogPreset.values.map((preset) => preset.renderDistanceChunks),
+        <int>[3, 6, 10, WorldDims.worldChunksX],
+      );
     });
   });
 

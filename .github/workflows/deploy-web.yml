@@ -1,15 +1,16 @@
-name: Deploy Minedart web
+name: Verify and deploy Minedart web
 
 on:
   push:
     branches:
       - main
   workflow_dispatch:
+  pull_request:
 
 permissions: {}
 
 concurrency:
-  group: minedart-cloudflare-pages-production
+  group: minedart-${{ github.event_name == 'pull_request' && github.ref || 'cloudflare-pages-production' }}
   cancel-in-progress: false
 
 jobs:
@@ -48,6 +49,10 @@ jobs:
         working-directory: packages/core
         run: dart analyze
 
+      - name: Check core formatting
+        working-directory: packages/core
+        run: dart format --output=none --set-exit-if-changed lib test
+
       - name: Test core
         working-directory: packages/core
         run: dart test
@@ -80,9 +85,17 @@ jobs:
         working-directory: app
         run: flutter analyze
 
+      - name: Check app formatting
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib test
+
       - name: Test app
         working-directory: app
         run: flutter test
+
+      - name: Test browser input and bounded decompression
+        working-directory: app
+        run: flutter test --platform chrome test/input/browser_pointer_lock_web_test.dart test/data/worlds/gzip_codec_test.dart
 
       - name: Build and verify Wasm release
         working-directory: app
@@ -99,6 +112,7 @@ jobs:
 
   deploy:
     name: Deploy verified bundle
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

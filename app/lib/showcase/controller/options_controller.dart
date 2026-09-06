@@ -3,34 +3,13 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-enum GameInputAction {
-  moveForward('Move forward'),
-  moveBackward('Move backward'),
-  strafeLeft('Strafe left'),
-  strafeRight('Strafe right'),
-  jump('Jump'),
-  openInventory('Open inventory'),
-  cycleFog('Cycle fog'),
-  storeSpawn('Save Teleport'),
-  respawn('Teleport'),
-  toggleNoclip('Toggle noclip'),
-  debugOverlay('Debug overlay');
+import '../../input/game_bindings.dart';
+import '../render/render_settings.dart';
 
-  const GameInputAction(this.label);
+export '../render/render_settings.dart' show FogPreset;
 
-  final String label;
-}
-
-enum FogPreset {
-  near('Near'),
-  normal('Normal'),
-  far('Far'),
-  off('Off');
-
-  const FogPreset(this.label);
-
-  final String label;
-}
+/// Compatibility name for the canonical game input control.
+typedef GameInputAction = GameControl;
 
 /// Mutable options state. Integration listens and applies values to game,
 /// renderer, and audio systems; this class performs no such work itself.
@@ -76,19 +55,7 @@ final class OptionsController extends ChangeNotifier {
   });
 
   static const Map<GameInputAction, LogicalKeyboardKey> defaultBindings =
-      <GameInputAction, LogicalKeyboardKey>{
-        GameInputAction.moveForward: LogicalKeyboardKey.keyW,
-        GameInputAction.moveBackward: LogicalKeyboardKey.keyS,
-        GameInputAction.strafeLeft: LogicalKeyboardKey.keyA,
-        GameInputAction.strafeRight: LogicalKeyboardKey.keyD,
-        GameInputAction.jump: LogicalKeyboardKey.space,
-        GameInputAction.openInventory: LogicalKeyboardKey.keyE,
-        GameInputAction.cycleFog: LogicalKeyboardKey.keyF,
-        GameInputAction.storeSpawn: LogicalKeyboardKey.enter,
-        GameInputAction.respawn: LogicalKeyboardKey.keyR,
-        GameInputAction.toggleNoclip: LogicalKeyboardKey.keyN,
-        GameInputAction.debugOverlay: LogicalKeyboardKey.f3,
-      };
+      GameBindings.defaults;
 
   final Map<GameInputAction, LogicalKeyboardKey> _bindings;
   GameInputAction? _rebindingAction;
@@ -104,6 +71,9 @@ final class OptionsController extends ChangeNotifier {
 
   UnmodifiableMapView<GameInputAction, LogicalKeyboardKey> get bindings =>
       UnmodifiableMapView<GameInputAction, LogicalKeyboardKey>(_bindings);
+
+  /// Immutable-by-convention snapshot for the game input boundary.
+  GameBindings get gameBindings => GameBindings(_bindings);
 
   GameInputAction? get rebindingAction => _rebindingAction;
   double get mouseSensitivity => _mouseSensitivity;
@@ -159,6 +129,9 @@ final class OptionsController extends ChangeNotifier {
   }
 
   void resetBindings() {
+    if (_rebindingAction == null && mapEquals(_bindings, defaultBindings)) {
+      return;
+    }
     _bindings
       ..clear()
       ..addAll(defaultBindings);

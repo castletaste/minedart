@@ -94,6 +94,20 @@ void main() {
   );
 
   test(
+    'single repository serializes conflicting creates and recovers queue',
+    () async {
+      final first = repository.create(document('same', 'First'));
+      final second = repository.create(document('same', 'Second'));
+
+      expect(await first, isA<WorldDocument>());
+      await expectLater(second, throwsStateError);
+      await repository.save(document('after-failure', 'Still writable'));
+      expect((await repository.load('same'))!.metadata.name, 'First');
+      expect(await repository.load('after-failure'), isNotNull);
+    },
+  );
+
+  test(
     'library listing reads MDRT2 metadata without inflating blocks',
     () async {
       final store = MemoryWorldByteStore();
@@ -139,16 +153,29 @@ void main() {
         expect(files.map((file) => file.uri.pathSegments.last), <String>[
           'atomic.mdrt',
         ]);
-        expect(
-          await File(
-            '${root.path}${Platform.pathSeparator}atomic.mdrt.tmp',
-          ).exists(),
-          isFalse,
-        );
+        expect(files.where((file) => file.path.endsWith('.tmp')), isEmpty);
         final loaded = await native.load('atomic');
         expect(loaded!.metadata.name, 'Second');
         expect(loaded.blocks[0], Blocks.dirt);
       },
     );
+
+    test('concurrent saves use independent temporary files', () async {
+      final native = NativeWorldRepository(root);
+      await native.create(document('concurrent', 'Initial'));
+
+      await Future.wait([
+        for (var i = 0; i < 8; i++)
+          native.save(document('concurrent', 'Version $i', block: i + 1)),
+      ]);
+
+      final loaded = await native.load('concurrent');
+      expect(loaded!.metadata.name, 'Version 7');
+      expect(loaded.blocks[0], 8);
+      final files = await root.list().toList();
+      expect(files.map((file) => file.uri.pathSegments.last), [
+        'concurrent.mdrt',
+      ]);
+    });
   });
 }

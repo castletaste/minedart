@@ -81,13 +81,13 @@ final class WorldTickEngine {
     }
   }
 
-  /// Read-only load priming for unstable/contact liquid topology.
+  /// Read-only load/history priming for persisted simulation work.
   ///
   /// Scanning order is chunk index followed by the persisted local voxel
-  /// order. Only cells that can currently change topology, react with water,
-  /// or absorb loaded water are scheduled. Capacity overflow is represented by
-  /// retry marks, so [isIdle] remains false until reconvergence. The return
-  /// value is the number of active entries added by this call.
+  /// order. Unstable liquids/falling blocks, sponges with nearby water, and TNT
+  /// carrying non-zero fuse metadata are scheduled. Capacity overflow is
+  /// represented by retry marks, so [isIdle] remains false until reconvergence.
+  /// The return value is the number of active entries added by this call.
   int prime(VoxelWorld world) {
     _activeSponges.clear();
     _spongeIndexWorld = world;
@@ -98,17 +98,33 @@ final class WorldTickEngine {
       for (var localIndex = 0; localIndex < ChunkIndex.volume; localIndex++) {
         final raw = chunk.blocks[localIndex];
         final behavior = _behaviorForRaw(raw);
-        if (behavior != BlockBehavior.water &&
-            behavior != BlockBehavior.lava &&
-            behavior != BlockBehavior.sponge) {
-          continue;
-        }
         final (x, y, z) = _worldCoordinates(chunk, localIndex);
         if (behavior == BlockBehavior.sponge) {
           _activeSponges.add(worldPositionKey(x, y, z));
           if (_hasWaterNearby(world, x, y, z)) {
             _scheduleGeneric(x, y, z);
           }
+          continue;
+        }
+        if (behavior == BlockBehavior.falling) {
+          if (y > 0 && Blocks.id(world.blockAt(x, y - 1, z)) == Blocks.air) {
+            _scheduleGeneric(x, y, z);
+          }
+          continue;
+        }
+        if (behavior == BlockBehavior.tnt) {
+          final elapsed = Blocks.meta(raw);
+          if (elapsed > 0) {
+            final key = worldPositionKey(x, y, z);
+            _tntFuses.putIfAbsent(
+              key,
+              () => (tntFuseTicks - elapsed).clamp(1, tntFuseTicks),
+            );
+            _scheduleGeneric(x, y, z);
+          }
+          continue;
+        }
+        if (behavior != BlockBehavior.water && behavior != BlockBehavior.lava) {
           continue;
         }
         if (!_needsFluidUpdate(
@@ -132,6 +148,12 @@ final class WorldTickEngine {
     }
     _spongeIndexInitialized = true;
     return _scheduled.length - before;
+  }
+
+  /// Clears transient scheduler state, then re-arms work encoded in [world].
+  int resetAndPrime(VoxelWorld world) {
+    clear();
+    return prime(world);
   }
 
   /// Starts a TNT fuse at this coordinate. Ordinary neighbor scheduling does

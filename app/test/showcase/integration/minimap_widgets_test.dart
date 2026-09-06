@@ -54,6 +54,10 @@ void main() {
     );
 
     final overlay = find.byKey(const ValueKey<String>('minimap-overlay'));
+    expect(
+      find.byKey(const ValueKey<String>('minimap-terrain-boundary')),
+      findsOneWidget,
+    );
     final node = tester.getSemantics(overlay).getSemanticsData();
     expect(node.label, 'World minimap');
     expect(node.hasAction(SemanticsAction.tap), isFalse);

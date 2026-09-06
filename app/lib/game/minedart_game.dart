@@ -7,34 +7,36 @@ import 'package:flame_3d/camera.dart';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
-import 'package:flutter/foundation.dart' show debugPrint, kDebugMode, kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show KeyEventResult, MediaQuery;
 import 'package:minedart_core/minedart_core.dart';
 
 import '../assets/atlas_selection.dart';
 import '../audio/audio.dart';
-import '../input/browser_pointer_lock.dart';
 import '../input/double_tap_sprint_detector.dart';
 import '../input/game_bindings.dart';
+import '../input/game_input_service.dart';
 import '../input/mouse_look.dart';
 import '../input/player_input_mapper.dart';
 import '../input/sprint_fov.dart';
 import '../hud/hud_state.dart';
 import '../interact/block_interactor.dart';
 import '../pipeline/mesh_pipeline.dart';
-import '../pipeline/mesh_request_queue.dart';
 import '../performance/performance.dart';
 import '../render/chunk_render_manager.dart';
 import '../render/voxel_material.dart';
 import '../showcase/render/showcase_render.dart';
+import 'chunk_mesh_coordinator.dart';
+import 'world_simulation_controller.dart';
 
 /// First-person MVP shell with native relative mouse look and voxel physics.
 final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     with KeyboardEvents, TapCallbacks {
   factory MinedartGame({
     required VoxelWorld world,
-    required MeshPipeline pipeline,
+    required MeshPipelineBase pipeline,
+    GameInputService? input,
     required AudioServiceApi audio,
     Vector3? initialFeet,
     double initialYaw = 0,
@@ -61,6 +63,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       body.position.clone(),
       initialYaw,
       initialPitch,
+      input ?? GameInputService(),
+      input == null,
     );
   }
 
@@ -73,6 +77,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     this._spawnFeet,
     this._yaw,
     this._pitch,
+    this.input,
+    this._ownsInput,
   ) : super(
         camera: FirstPersonCamera(
           following: _eyePosition,
@@ -96,16 +102,52 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   );
 
   final VoxelWorld voxelWorld;
-  final MeshPipeline pipeline;
+  final MeshPipelineBase pipeline;
   final AudioServiceApi audio;
   final PlayerBody _playerBody;
   final Vector3 _eyePosition;
   final Vector3 _spawnFeet;
   final PhysicsSim _physics = PhysicsSim();
-  final EditHistory editHistory = EditHistory();
-  final WorldTickEngine worldTicks = WorldTickEngine();
-  final MouseLook _mouseLook = MouseLook();
-  final BrowserPointerLock _browserPointerLock = BrowserPointerLock();
+  late final WorldSimulationController _simulation = WorldSimulationController(
+    world: voxelWorld,
+    onChanges: _applySimulationChanges,
+  );
+  EditHistory get editHistory => _simulation.history;
+  WorldTickEngine get worldTicks => _simulation.ticks;
+  final GameInputService input;
+  final bool _ownsInput;
+  late final GameInputClient _inputClient = input.createClient(_onMouseEvent);
+  final Completer<Object?> _ready = Completer<Object?>();
+  final Completer<void> _removed = Completer<void>();
+  bool _terminal = false;
+  bool _resourcesReady = false;
+  ChunkMeshCoordinator? _meshes;
+  Future<void> _meshCleanup = Future<void>.value();
+
+  /// Completes on mounted readiness, load failure, or removal during loading.
+  Future<Object?> get mountedReady => _ready.future;
+  @override
+  Future<void> get removed => _removed.future;
+  Future<void> get meshCleanup => _meshCleanup;
+  bool get isSessionDisposed => _terminal;
+
+  void activateInput() => _inputClient.activate();
+
+  void resumeSession() {
+    if (_terminal) throw StateError('Game has been removed');
+    if (!_uiInputCaptured) _inputClient.resume();
+    resumeEngine();
+  }
+
+  Future<void> quiesceSession() {
+    pauseEngine();
+    _keys.clear();
+    _pendingMouseDx = 0;
+    _pendingMouseDy = 0;
+    _sprintDetector.reset();
+    return _inputClient.suspend();
+  }
+
   final DoubleTapSprintDetector _sprintDetector = DoubleTapSprintDetector();
   final FootstepCadence _footstepCadence = FootstepCadence();
   final Set<LogicalKeyboardKey> _keys = <LogicalKeyboardKey>{};
@@ -129,28 +171,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _invertMouseY = invertY;
   }
 
-  /// Monotonic mesh generation per chunk index. Guarantees stale remesh
-  /// results are dropped even when a border edit dirties a neighbor chunk
-  /// without bumping that chunk's own revision (see cross-review P1).
-  final Map<int, int> _meshGeneration = <int, int>{};
-
-  ChunkSnapshot _snapshotFor(Chunk chunk, int generation) {
-    final raw = ChunkSnapshot.capture(voxelWorld, chunk.cx, chunk.cy, chunk.cz);
-    return ChunkSnapshot.fromBuffers(
-      cx: raw.cx,
-      cy: raw.cy,
-      cz: raw.cz,
-      revision: generation,
-      blocks: raw.blocks,
-      skyHeight: raw.skyHeight,
-    );
-  }
-
   late final ChunkRenderManager chunks;
   late final VoxelMaterialControls voxelMaterial;
   late final TargetOutline targetOutline;
   late final BlockParticlePool particlePool;
-  late final RenderLabBridge renderLab;
+  RenderLabBridge? _renderLab;
+  RenderLabBridge get renderLab => _renderLab!;
   final FrameMetrics frameMetrics = FrameMetrics(
     capacity: _performanceSampleCapacity,
   );
@@ -158,9 +184,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     interval: const Duration(milliseconds: _performanceSnapshotIntervalMs),
   );
   final Stopwatch _performanceClock = Stopwatch()..start();
-  StreamSubscription<ChunkMeshData>? _meshSub;
-  StreamSubscription<MouseLookEvent>? _mouseSub;
-  StreamSubscription<MouseLookEvent>? _browserMouseSub;
   double _yaw;
   double _pitch;
   double _pendingMouseDx = 0;
@@ -172,16 +195,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   bool _uiInputCaptured = false;
   bool simulationPaused = false;
   int _renderDistanceChunks = 6;
-  int _viewChunkX = -1;
-  int _viewChunkZ = -1;
-  final Set<int> _requestedChunks = <int>{};
-  final MeshRequestQueue _pendingMeshCaptures = MeshRequestQueue();
-  final Stopwatch _meshCaptureStopwatch = Stopwatch();
-  final Stopwatch _meshApplyStopwatch = Stopwatch();
-  double _worldTickAccumulator = 0;
-  bool _suppressPrimedTickHistory = false;
-  static const double _worldTickStep = 0.05;
-  static const int _worldTickBudget = 256;
 
   void setRenderDistanceChunks(int chunks) {
     final next = chunks.clamp(2, WorldDims.worldChunksX);
@@ -232,17 +245,25 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   /// mouse does not also break a block. Platforms without the native bridge
   /// fall back to always-on interaction.
   bool get interactionEnabled =>
+      !_terminal &&
+      _inputClient.isActive &&
       !_uiInputCaptured &&
-      (kIsWeb
-          ? _browserPointerLock.isLocked
-          : _mouseLook.isCaptured || _mouseCaptureUnavailable);
+      (_inputClient.isCaptured || _mouseCaptureUnavailable);
 
   void setUiInputCaptured(bool captured) {
     if (_uiInputCaptured == captured) return;
     _uiInputCaptured = captured;
     _keys.clear();
     _sprintDetector.reset();
-    if (captured) unawaited(_releaseMouse());
+    if (captured) {
+      unawaited(_releaseMouse().catchError(_reportInputError));
+    } else if (!paused && !_terminal) {
+      try {
+        _inputClient.resume();
+      } catch (error, stack) {
+        _reportInputError(error, stack);
+      }
+    }
   }
 
   /// Waits until the platform cursor is released before a modal route opens.
@@ -261,14 +282,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         : Blocks.id(voxelWorld.blockAt(hit.x, hit.y, hit.z));
     if (hit != null && brokenBlockId == Blocks.tnt) {
       if (worldTicks.activateTnt(voxelWorld, hit.x, hit.y, hit.z)) {
-        _beginUserCascade();
+        _simulation.beginUserCascade();
         hud.recordAction('tnt fuse ${hit.x}/${hit.y}/${hit.z}');
-        unawaited(
-          audio.play(
-            AudioCue.tntFuse,
-            seed: _editAudioSeed(hit.x, hit.y, hit.z),
-          ),
-        );
+        _playAudio(AudioCue.tntFuse, seed: _editAudioSeed(hit.x, hit.y, hit.z));
       }
       return;
     }
@@ -279,18 +295,16 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
           : 'break none',
     );
     if (result.changed) {
-      _recordUserEdit(result.changeSet);
+      _simulation.recordUserEdit(result.changeSet);
       particlePool.emitBlock(
         blockId: brokenBlockId,
         x: result.x,
         y: result.y,
         z: result.z,
       );
-      unawaited(
-        audio.play(
-          AudioCue.forBlock(brokenBlockId, BlockAudioAction.breakBlock),
-          seed: _editAudioSeed(result.x, result.y, result.z),
-        ),
+      _playAudio(
+        AudioCue.forBlock(brokenBlockId, BlockAudioAction.breakBlock),
+        seed: _editAudioSeed(result.x, result.y, result.z),
       );
     }
   }
@@ -309,7 +323,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
           : 'place none',
     );
     if (result.changed) {
-      _recordUserEdit(result.changeSet);
+      _simulation.recordUserEdit(result.changeSet);
       particlePool.emitBlock(
         blockId: result.blockId,
         x: result.x,
@@ -317,11 +331,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         z: result.z,
         count: 3,
       );
-      unawaited(
-        audio.play(
-          AudioCue.forBlock(result.blockId, BlockAudioAction.placeBlock),
-          seed: _editAudioSeed(result.x, result.y, result.z),
-        ),
+      _playAudio(
+        AudioCue.forBlock(result.blockId, BlockAudioAction.placeBlock),
+        seed: _editAudioSeed(result.x, result.y, result.z),
       );
     }
   }
@@ -334,70 +346,101 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   Future<void> onLoad() async {
-    await super.onLoad();
-    camera
-      ..resetRotation()
-      ..rotate(_yaw, _pitch);
-    images.prefix = 'assets/';
-    final atlas = await images.loadTexture(selectedAtlas.assetPath);
-    // Web uses a compact WGSL cutout material; macOS keeps fog support.
-    final Material material;
-    if (kIsWeb) {
-      final webMaterial = WebVoxelMaterial(albedoTexture: atlas);
-      voxelMaterial = webMaterial;
-      material = webMaterial;
-    } else {
-      final nativeMaterial = VoxelMaterial(albedoTexture: atlas);
-      voxelMaterial = nativeMaterial;
-      material = nativeMaterial;
-    }
-    chunks = ChunkRenderManager(world: world, material: material);
+    try {
+      await super.onLoad();
+      if (_terminal) return;
+      camera
+        ..resetRotation()
+        ..rotate(_yaw, _pitch);
+      images.prefix = 'assets/';
+      final atlas = await images.loadTexture(selectedAtlas.assetPath);
+      if (_terminal) return;
+      // Web uses a compact WGSL cutout material; macOS keeps fog support.
+      final Material material;
+      if (kIsWeb) {
+        final webMaterial = WebVoxelMaterial(albedoTexture: atlas);
+        voxelMaterial = webMaterial;
+        material = webMaterial;
+      } else {
+        final nativeMaterial = VoxelMaterial(albedoTexture: atlas);
+        voxelMaterial = nativeMaterial;
+        material = nativeMaterial;
+      }
+      chunks = ChunkRenderManager(world: world, material: material);
 
-    targetOutline = TargetOutline()..hide();
-    particlePool = BlockParticlePool();
-    renderLab = RenderLabBridge(
-      capabilities: kIsWeb ? RenderCapabilities.web : RenderCapabilities.native,
-      fogTarget: VoxelMaterialFogTarget(voxelMaterial),
-      targetOutline: targetOutline,
-      particlePool: particlePool,
-      camera: camera,
-      frameMetrics: frameMetrics,
-    );
-
-    world.addAll([
-      LightComponent.ambient(intensity: 1.0),
-      targetOutline,
-      particlePool,
-    ]);
-
-    _meshSub = pipeline.results.listen(_applyMeshResult);
-    pipeline.onMainThreadMeshTime =
-        frameMetrics.telemetry.accumulateMainThreadMesh;
-    if (!kIsWeb) {
-      _mouseSub = _mouseLook.events.listen(
-        _onMouseEvent,
-        onError: (Object error) => debugPrint('Mouse input error: $error'),
+      targetOutline = TargetOutline()..hide();
+      particlePool = BlockParticlePool();
+      _renderLab = RenderLabBridge(
+        capabilities: kIsWeb
+            ? RenderCapabilities.web
+            : RenderCapabilities.native,
+        fogTarget: VoxelMaterialFogTarget(voxelMaterial),
+        targetOutline: targetOutline,
+        particlePool: particlePool,
+        camera: camera,
+        frameMetrics: frameMetrics,
       );
-      _mouseLook.start();
+
+      world.addAll([
+        LightComponent.ambient(intensity: 1.0),
+        targetOutline,
+        particlePool,
+      ]);
+
+      _meshes = ChunkMeshCoordinator(
+        world: voxelWorld,
+        pipeline: pipeline,
+        chunks: chunks,
+        deferSnapshotCapture: kIsWeb,
+        onMainThreadMeshTime: frameMetrics.telemetry.accumulateMainThreadMesh,
+        onFailure: _reportMeshFailure,
+      )..start();
+      _resourcesReady = true;
+      _simulation.initialize();
+      _updateChunkView(force: true);
+    } catch (error) {
+      if (!_ready.isCompleted) _ready.complete(error);
+      rethrow;
     }
-    _browserMouseSub = _browserPointerLock.events.listen(_onMouseEvent);
-    worldTicks.prime(voxelWorld);
-    _suppressPrimedTickHistory = !worldTicks.isIdle;
-    _updateChunkView(force: true);
+  }
+
+  @override
+  void onMount() {
+    if (_terminal) return;
+    super.onMount();
+    if (_ownsInput) {
+      activateInput();
+      resumeSession();
+    }
+    if (!_ready.isCompleted) _ready.complete(null);
   }
 
   @override
   void onRemove() {
-    _meshSub?.cancel();
-    _mouseSub?.cancel();
-    _browserMouseSub?.cancel();
-    _browserPointerLock.dispose();
-    pipeline.onMainThreadMeshTime = null;
-    _pendingMeshCaptures.dispose();
-    unawaited(_mouseLook.close());
-    renderLab.dispose();
-    hud.dispose();
+    disposeSessionResources();
     super.onRemove();
+    if (!_removed.isCompleted) _removed.complete();
+  }
+
+  /// Safe for factory failure before mounting and for repeated host teardown.
+  void disposeSessionResources() {
+    if (_terminal) return;
+    _terminal = true;
+    pauseEngine();
+    if (!_ready.isCompleted) _ready.complete(StateError('Game was removed'));
+    _meshCleanup = _meshes?.close() ?? Future<void>.value();
+    _inputClient.dispose();
+    _renderLab?.dispose();
+    hud.dispose();
+    if (_ownsInput) unawaited(input.close().catchError(_reportInputError));
+  }
+
+  void _reportMeshFailure(Object error, StackTrace stack) {
+    if (_terminal) return;
+    if (error is MeshPipelineFailure) {
+      hud.recordAction('mesh failed: ${error.chunkIndex}');
+    }
+    debugPrint('Chunk meshing failed: $error\n$stack');
   }
 
   @override
@@ -408,158 +451,21 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   /// Requests relative mouse input from a pointer event that hit the game.
   /// UI overlays never call this, so their clicks cannot recapture the cursor.
   void requestMouseCapture() {
-    if (_uiInputCaptured || _mouseCapturePending) return;
+    if (_terminal || _uiInputCaptured || _mouseCapturePending) return;
     _mouseCapturePending = true;
-    final request = kIsWeb ? _captureBrowserMouse() : _captureMouse();
+    final request = _captureMouse();
     unawaited(request.whenComplete(() => _mouseCapturePending = false));
   }
 
-  void _updateChunkView({bool force = false}) {
-    final cx = (_eyePosition.x ~/ WorldDims.chunkSize).clamp(
-      0,
-      WorldDims.worldChunksX - 1,
-    );
-    final cz = (_eyePosition.z ~/ WorldDims.chunkSize).clamp(
-      0,
-      WorldDims.worldChunksZ - 1,
-    );
-    if (!force && cx == _viewChunkX && cz == _viewChunkZ) return;
-    _viewChunkX = cx;
-    _viewChunkZ = cz;
-    if (kIsWeb) {
-      _pendingMeshCaptures.setPriorityOrigin(x: cx, y: 0, z: cz);
-    }
-    chunks.updateVisibility(
-      playerX: _eyePosition.x,
-      playerZ: _eyePosition.z,
-      renderDistanceChunks: _renderDistanceChunks,
-    );
-    chunks.evictOutsideView(onEvicted: _forgetRequestedChunk);
+  void _updateChunkView({bool force = false}) => _meshes?.updateView(
+    playerX: _eyePosition.x,
+    playerY: _eyePosition.y,
+    playerZ: _eyePosition.z,
+    renderDistanceChunks: _renderDistanceChunks,
+    force: force,
+  );
 
-    final minX = (cx - _renderDistanceChunks).clamp(
-      0,
-      WorldDims.worldChunksX - 1,
-    );
-    final maxX = (cx + _renderDistanceChunks).clamp(
-      0,
-      WorldDims.worldChunksX - 1,
-    );
-    final minZ = (cz - _renderDistanceChunks).clamp(
-      0,
-      WorldDims.worldChunksZ - 1,
-    );
-    final maxZ = (cz + _renderDistanceChunks).clamp(
-      0,
-      WorldDims.worldChunksZ - 1,
-    );
-    for (var chunkZ = minZ; chunkZ <= maxZ; chunkZ++) {
-      for (var chunkX = minX; chunkX <= maxX; chunkX++) {
-        for (var chunkY = 0; chunkY < WorldDims.worldChunksY; chunkY++) {
-          final index = VoxelWorld.chunkIndexOf(chunkX, chunkY, chunkZ);
-          final chunk = voxelWorld.chunks[index];
-          if (chunk.isEmpty || !_requestedChunks.add(index)) continue;
-          _requestChunk(chunk);
-        }
-      }
-    }
-  }
-
-  void _requestChunk(Chunk chunk) {
-    final index = VoxelWorld.chunkIndexOf(chunk.cx, chunk.cy, chunk.cz);
-    final generation = (_meshGeneration[index] ?? 0) + 1;
-    _meshGeneration[index] = generation;
-    if (kIsWeb) {
-      _pendingMeshCaptures.request(
-        chunkIndex: index,
-        chunkX: chunk.cx,
-        chunkY: chunk.cy,
-        chunkZ: chunk.cz,
-        generation: generation,
-      );
-      return;
-    }
-    _submitChunkSnapshot(chunk, generation);
-  }
-
-  void _submitChunkSnapshot(Chunk chunk, int generation) {
-    final dx = chunk.cx * WorldDims.chunkSize + 8.0 - _eyePosition.x;
-    final dy = chunk.cy * WorldDims.chunkSize + 8.0 - _eyePosition.y;
-    final dz = chunk.cz * WorldDims.chunkSize + 8.0 - _eyePosition.z;
-    pipeline.request(
-      MeshJob(
-        snapshot: _snapshotFor(chunk, generation),
-        priority: dx * dx + dy * dy + dz * dz,
-      ),
-    );
-  }
-
-  void _applyMeshResult(ChunkMeshData data) {
-    if (!chunks.isChunkInView(data.chunkIndex)) {
-      _requestedChunks.remove(data.chunkIndex);
-      return;
-    }
-    _meshApplyStopwatch
-      ..reset()
-      ..start();
-    try {
-      chunks.apply(data);
-    } finally {
-      _meshApplyStopwatch.stop();
-      frameMetrics.telemetry.accumulateMainThreadMesh(
-        _meshApplyStopwatch.elapsedMicroseconds / 1000,
-      );
-    }
-  }
-
-  void _drainPendingMeshCaptures() {
-    if (!kIsWeb || _pendingMeshCaptures.isEmpty) return;
-    final budget = pipeline.activity.budgetMicroseconds;
-    _meshCaptureStopwatch
-      ..reset()
-      ..start();
-    var attempted = false;
-    try {
-      while (!_pendingMeshCaptures.isEmpty &&
-          (!attempted || _meshCaptureStopwatch.elapsedMicroseconds < budget)) {
-        final request = _pendingMeshCaptures.takeNext();
-        if (request == null) break;
-        attempted = true;
-        if (!_isChunkInView(request.chunkX, request.chunkZ)) {
-          _pendingMeshCaptures.complete(request);
-          _requestedChunks.remove(request.chunkIndex);
-          continue;
-        }
-        try {
-          _submitChunkSnapshot(
-            voxelWorld.chunks[request.chunkIndex],
-            request.generation,
-          );
-        } on Object {
-          _pendingMeshCaptures.fail(request);
-          continue;
-        }
-        _pendingMeshCaptures.complete(request);
-      }
-    } finally {
-      _meshCaptureStopwatch.stop();
-      if (attempted) {
-        frameMetrics.telemetry.accumulateMainThreadMesh(
-          _meshCaptureStopwatch.elapsedMicroseconds / 1000,
-        );
-      }
-    }
-  }
-
-  int get _meshQueueCount =>
-      pipeline.pendingCount + _pendingMeshCaptures.pendingCount;
-
-  bool _isChunkInView(int chunkX, int chunkZ) =>
-      (chunkX - _viewChunkX).abs() <= _renderDistanceChunks &&
-      (chunkZ - _viewChunkZ).abs() <= _renderDistanceChunks;
-
-  void _forgetRequestedChunk(int chunkIndex) {
-    _requestedChunks.remove(chunkIndex);
-  }
+  int get _meshQueueCount => _meshes?.pendingCount ?? pipeline.pendingCount;
 
   void _updateMeshActivity() {
     final hasImmediateInput =
@@ -587,13 +493,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       _keys.contains(LogicalKeyboardKey.arrowDown);
 
   /// Re-mesh the given dirty chunk indices (after a block edit).
-  void remeshDirty(Set<int> dirtyChunks) {
-    for (final index in dirtyChunks) {
-      final chunk = voxelWorld.chunks[index];
-      _requestedChunks.add(index);
-      _requestChunk(chunk);
-    }
-  }
+  void remeshDirty(Set<int> dirtyChunks) => _meshes?.remeshDirty(
+    dirtyChunks,
+    playerX: _eyePosition.x,
+    playerY: _eyePosition.y,
+    playerZ: _eyePosition.z,
+  );
 
   @override
   KeyEventResult onKeyEvent(
@@ -630,12 +535,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       } else if (event.logicalKey == _bindings[GameControl.cycleFog]) {
         final update = renderLab.cycleFogPreset();
         onFogPresetChanged?.call(update.settings.fogPreset);
-        setRenderDistanceChunks(switch (update.settings.fogPreset) {
-          FogPreset.near => 3,
-          FogPreset.normal => 6,
-          FogPreset.far => 10,
-          FogPreset.off => WorldDims.worldChunksX,
-        });
+        setRenderDistanceChunks(update.settings.fogPreset.renderDistanceChunks);
         hud.recordAction(
           update.status == RenderLabUpdateStatus.unsupported
               ? 'fog unsupported'
@@ -708,12 +608,13 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   void update(double dt) {
+    if (_terminal || !_resourcesReady) return;
     final telemetry = frameMetrics.telemetry;
     telemetry.recordWallFrame(dt * 1000);
     telemetry.startTiming(PerformanceMetric.update);
     try {
       _updateMeshActivity();
-      _drainPendingMeshCaptures();
+      _meshes?.drainPendingCaptures();
       _updateLook(dt);
       if (!simulationPaused) {
         if (_noclip) {
@@ -721,7 +622,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         } else {
           _updatePhysics(dt);
         }
-        _updateWorldSimulation(dt);
+        _simulation.advance(dt);
       }
       camera.fovY = stepSprintFov(
         current: camera.fovY,
@@ -753,6 +654,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   void render(Canvas canvas) {
+    if (_terminal || !_resourcesReady) return;
     final telemetry = frameMetrics.telemetry;
     telemetry.startTiming(PerformanceMetric.cpuRender);
     try {
@@ -797,70 +699,35 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     }
   }
 
-  void _recordUserEdit(WorldChangeSet? changes) {
-    if (changes == null || changes.isEmpty) return;
-    _beginUserCascade();
-    editHistory.record(changes);
+  void _applySimulationChanges(WorldChangeSet changes) {
+    remeshDirty(changes.dirtyChunks);
+    final exploded = shouldPlayExplosionForWorldChanges(changes.changes);
+    var removed = 0;
     for (final change in changes.changes) {
-      worldTicks.enqueueAround(change.x, change.y, change.z);
+      final oldId = Blocks.id(change.oldRaw);
+      if (oldId != Blocks.air && Blocks.id(change.newRaw) == Blocks.air) {
+        removed++;
+        particlePool.emitBlock(
+          blockId: oldId,
+          x: change.x,
+          y: change.y,
+          z: change.z,
+          count: 2,
+        );
+      }
     }
-  }
-
-  void _beginUserCascade() {
-    // A user edit becomes the new history boundary even if bounded load
-    // reconvergence is still pending. Its consequences then remain undoable
-    // as one cascade instead of leaving the edited topology half-recorded.
-    _suppressPrimedTickHistory = false;
-    editHistory.beginGroup();
-  }
-
-  void _updateWorldSimulation(double dt) {
-    _worldTickAccumulator += dt.clamp(0, 0.25);
-    var steps = 0;
-    while (_worldTickAccumulator >= _worldTickStep && steps < 5) {
-      _worldTickAccumulator -= _worldTickStep;
-      steps++;
-      final changes = worldTicks.tick(voxelWorld, _worldTickBudget);
-      if (changes.isNotEmpty) {
-        if (!_suppressPrimedTickHistory) editHistory.record(changes);
-        remeshDirty(changes.dirtyChunks);
-        final exploded = shouldPlayExplosionForWorldChanges(changes.changes);
-        var removed = 0;
-        for (final change in changes.changes) {
-          final oldId = Blocks.id(change.oldRaw);
-          if (oldId != Blocks.air && Blocks.id(change.newRaw) == Blocks.air) {
-            removed++;
-            particlePool.emitBlock(
-              blockId: oldId,
-              x: change.x,
-              y: change.y,
-              z: change.z,
-              count: 2,
-            );
-          }
-        }
-        if (exploded) {
-          unawaited(audio.play(AudioCue.explosion, seed: removed));
-        }
-      }
-      if (worldTicks.isIdle) {
-        _suppressPrimedTickHistory = false;
-        editHistory.endGroup();
-      }
+    if (exploded) {
+      _playAudio(AudioCue.explosion, seed: removed);
     }
   }
 
   void _undoWorldEdit() {
-    worldTicks.clear();
-    _suppressPrimedTickHistory = false;
-    final changes = editHistory.undo(voxelWorld);
+    final changes = _simulation.undo();
     _applyHistoryResult(changes, 'undo');
   }
 
   void _redoWorldEdit() {
-    worldTicks.clear();
-    _suppressPrimedTickHistory = false;
-    final changes = editHistory.redo(voxelWorld);
+    final changes = _simulation.redo();
     _applyHistoryResult(changes, 'redo');
   }
 
@@ -874,6 +741,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   }
 
   void _onMouseEvent(MouseLookEvent event) {
+    if (_terminal) return;
     switch (event) {
       case MouseDelta(:final dx, :final dy):
         if (dx != 0 || dy != 0) _reportMovementActivity();
@@ -900,49 +768,21 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   }
 
   Future<void> _captureMouse() async {
-    if (_uiInputCaptured) return;
     try {
-      final captured = await _mouseLook.capture();
-      if (_uiInputCaptured && captured) {
-        await _mouseLook.release();
-        return;
-      }
-      // A successful capture proves the native bridge works.
-      _mouseCaptureUnavailable = false;
+      await _inputClient.capture();
+      if (!_terminal) _mouseCaptureUnavailable = false;
     } on MissingPluginException catch (error) {
-      // No native bridge on this platform: allow interaction without capture.
-      _mouseCaptureUnavailable = true;
+      if (!_terminal) _mouseCaptureUnavailable = true;
       debugPrint('Mouse capture unsupported: $error');
-    } on Object catch (error) {
-      // Transient failure (window not focused, CG error): keep the gate.
-      debugPrint('Could not capture mouse: $error');
+    } catch (error, stack) {
+      _reportInputError(error, stack);
     }
   }
 
-  Future<void> _captureBrowserMouse() async {
-    if (_uiInputCaptured) return;
-    try {
-      await _browserPointerLock.capture();
-      if (_uiInputCaptured) _browserPointerLock.release();
-    } on Object catch (error) {
-      // Pointer Lock can reject when the tab loses focus between pointer-down
-      // and the async browser request. It is a recoverable missed capture: the
-      // next click retries. Keep release consoles clean while retaining a
-      // diagnostic in debug builds.
-      if (kDebugMode) debugPrint('Could not capture browser mouse: $error');
-    }
-  }
+  Future<void> _releaseMouse() => _inputClient.suspend();
 
-  Future<void> _releaseMouse() async {
-    if (kIsWeb) {
-      _browserPointerLock.release();
-      return;
-    }
-    try {
-      await _mouseLook.release();
-    } on Object catch (error) {
-      debugPrint('Could not release mouse: $error');
-    }
+  static void _reportInputError(Object error, StackTrace stack) {
+    debugPrint('Mouse input failed: $error\n$stack');
   }
 
   void _updateLook(double dt) {
@@ -1019,9 +859,19 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     final seed =
         _editAudioSeed(blockX, blockY, blockZ) ^
         (_footstepSerial++ * 0x1F123BB5);
-    unawaited(
-      audio.play(AudioCue.forBlock(blockId, BlockAudioAction.step), seed: seed),
-    );
+    _playAudio(AudioCue.forBlock(blockId, BlockAudioAction.step), seed: seed);
+  }
+
+  void _playAudio(AudioCue cue, {int seed = 0}) {
+    try {
+      unawaited(audio.play(cue, seed: seed).catchError(_reportAudioError));
+    } catch (error, stack) {
+      _reportAudioError(error, stack);
+    }
+  }
+
+  static void _reportAudioError(Object error, StackTrace stack) {
+    debugPrint('Audio playback failed: $error\n$stack');
   }
 
   void _updateNoclip(double dt) {

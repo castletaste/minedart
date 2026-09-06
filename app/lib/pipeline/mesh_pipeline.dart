@@ -7,7 +7,9 @@ export 'mesh_pipeline_base.dart'
         MainThreadMeshTimeObserver,
         MeshJob,
         MeshPipelineActivity,
-        MeshPipelineBase;
+        MeshPipelineBase,
+        MeshPipelineFailure,
+        MeshPipelineFailureKind;
 export 'mesh_pipeline_io.dart'
     if (dart.library.js_interop) 'mesh_pipeline_web.dart'
     show MeshPipeline;

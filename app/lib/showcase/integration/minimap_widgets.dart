@@ -47,11 +47,14 @@ final class MinimapOverlay extends StatelessWidget {
               builder: (context, value, _) => Stack(
                 fit: StackFit.expand,
                 children: [
-                  CustomPaint(
-                    isComplex: true,
-                    painter: MinimapTerrainPainter(
-                      value.snapshot,
-                      sampleStep: 2,
+                  RepaintBoundary(
+                    key: const ValueKey<String>('minimap-terrain-boundary'),
+                    child: CustomPaint(
+                      isComplex: true,
+                      painter: MinimapTerrainPainter(
+                        value.snapshot,
+                        sampleStep: 2,
+                      ),
                     ),
                   ),
                   CustomPaint(painter: MinimapMarkerPainter(value)),

@@ -5,6 +5,34 @@ import 'package:minedart/showcase/controller/options_controller.dart';
 import 'package:minedart/showcase/ui/pause_options.dart';
 
 void main() {
+  testWidgets('keeps compact and desktop layouts within the viewport', (
+    tester,
+  ) async {
+    final controller = OptionsController();
+    addTearDown(controller.dispose);
+    final view = PauseOptionsView(
+      controller: controller,
+      callbacks: PauseMenuCallbacks(
+        onResume: () {},
+        onOpenWorldLibrary: () {},
+        onOpenRenderLab: () {},
+        onSaveAndQuit: () {},
+      ),
+    );
+
+    _setViewport(tester, width: 360, height: 640);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: view)));
+    expect(find.byKey(PauseOptionsKeys.compact), findsOneWidget);
+    expect(tester.getRect(find.byKey(PauseOptionsKeys.panel)).width, 336);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(1100, 800);
+    await tester.pump();
+    expect(find.byKey(PauseOptionsKeys.expanded), findsOneWidget);
+    expect(tester.getRect(find.byKey(PauseOptionsKeys.panel)).width, 900);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'settings controls and keyboard rebinding update the controller',
     (tester) async {

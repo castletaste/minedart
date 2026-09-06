@@ -17,10 +17,7 @@ import 'package:meta/meta.dart';
 /// {@endtemplate}
 class World3D extends flame.World with flame.HasGameReference<FlameGame3D> {
   /// {@macro world_3d}
-  World3D({
-    super.children,
-    super.priority,
-  });
+  World3D({super.children, super.priority});
 
   final List<Light> _lights = [];
 
@@ -48,8 +45,15 @@ class World3D extends flame.World with flame.HasGameReference<FlameGame3D> {
       ..setCamera(camera.viewMatrix, camera.projectionMatrix);
 
     game.device.beginPass(renderSize);
-    super.renderFromCamera(canvas);
-    context.flush();
+    camera.withFrustumCacheForRender(() {
+      try {
+        super.renderFromCamera(canvas);
+        context.flush();
+      } catch (_) {
+        context.discardPendingDraws();
+        rethrow;
+      }
+    });
 
     final image = game.device.endPass();
     canvas.drawImageRect(

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -100,6 +101,71 @@ void main() {
     await autosaver.stopAndWait();
     expect(store.writeCalls, 2);
   });
+
+  test('metadata replacement requires stopped and drained ownership', () async {
+    final now = DateTime.utc(2026, 8, 24);
+    final autosaver = RepositoryAutosaver(
+      repository: StoredWorldRepository(MemoryWorldByteStore()),
+      world: VoxelWorld(),
+      metadata: WorldMetadata(
+        id: 'metadata-world',
+        name: 'Before',
+        seed: 1,
+        createdAt: now,
+        updatedAt: now,
+        spawn: const WorldSpawn.origin(),
+      ),
+      readSpawn: () => const WorldSpawn.origin(),
+    )..start();
+
+    expect(
+      () => autosaver.replaceMetadata(
+        autosaver.metadata.copyWith(name: 'Unsafe'),
+      ),
+      throwsStateError,
+    );
+    await autosaver.stopAndWait();
+    autosaver.replaceMetadata(autosaver.metadata.copyWith(name: 'Safe'));
+    await autosaver.saveNow();
+    expect(autosaver.metadata.name, 'Safe');
+  });
+
+  test('stopAndWait blocks until an in-flight final write completes', () async {
+    final store = _GatedStore();
+    final now = DateTime.utc(2026, 8, 24);
+    final autosaver = RepositoryAutosaver(
+      repository: StoredWorldRepository(store),
+      world: VoxelWorld(),
+      metadata: WorldMetadata(
+        id: 'gated-world',
+        name: 'Gated',
+        seed: 2,
+        createdAt: now,
+        updatedAt: now,
+        spawn: const WorldSpawn.origin(),
+      ),
+      readSpawn: () => const WorldSpawn.origin(),
+    )..start();
+
+    final saving = autosaver.saveNow();
+    await store.writeStarted.future;
+    var stopped = false;
+    final stopping = autosaver.stopAndWait().then((_) => stopped = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(stopped, isFalse);
+    expect(
+      () => autosaver.replaceMetadata(
+        autosaver.metadata.copyWith(name: 'Too early'),
+      ),
+      throwsStateError,
+    );
+
+    store.allowWrite.complete();
+    await saving;
+    await stopping;
+    expect(stopped, isTrue);
+    autosaver.replaceMetadata(autosaver.metadata.copyWith(name: 'After drain'));
+  });
 }
 
 final class _FailingStore implements WorldByteStore {
@@ -141,5 +207,25 @@ final class _FailOnceStore implements WorldByteStore {
     writeCalls++;
     if (writeCalls == 1) throw StateError('transient disk full');
     this.bytes = Uint8List.fromList(bytes);
+  }
+}
+
+final class _GatedStore implements WorldByteStore {
+  final writeStarted = Completer<void>();
+  final allowWrite = Completer<void>();
+
+  @override
+  Future<List<String>> keys() async => const [];
+
+  @override
+  Future<Uint8List?> read(String id) async => null;
+
+  @override
+  Future<bool> remove(String id) async => false;
+
+  @override
+  Future<void> write(String id, Uint8List bytes) async {
+    writeStarted.complete();
+    await allowWrite.future;
   }
 }

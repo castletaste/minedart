@@ -20,7 +20,18 @@ final class _IndexedDbWorldByteStore implements WorldByteStore {
 
   Future<web.IDBDatabase>? _opening;
 
-  Future<web.IDBDatabase> get _database => _opening ??= _open();
+  Future<web.IDBDatabase> get _database async {
+    final existing = _opening;
+    if (existing != null) return existing;
+    final attempt = _open();
+    _opening = attempt;
+    try {
+      return await attempt;
+    } on Object {
+      if (identical(_opening, attempt)) _opening = null;
+      rethrow;
+    }
+  }
 
   Future<web.IDBDatabase> _open() {
     final completer = Completer<web.IDBDatabase>();
@@ -28,9 +39,11 @@ final class _IndexedDbWorldByteStore implements WorldByteStore {
     request.onupgradeneeded = ((web.Event _) {
       final result = request.result;
       if (result == null || !result.isA<web.IDBDatabase>()) {
-        completer.completeError(
-          const FormatException('IndexedDB open returned no database'),
-        );
+        if (!completer.isCompleted) {
+          completer.completeError(
+            const FormatException('IndexedDB open returned no database'),
+          );
+        }
         return;
       }
       final db = result as web.IDBDatabase;
@@ -41,24 +54,33 @@ final class _IndexedDbWorldByteStore implements WorldByteStore {
     request.onsuccess = ((web.Event _) {
       final db = request.result;
       if (db != null && db.isA<web.IDBDatabase>()) {
-        completer.complete(db as web.IDBDatabase);
-      } else {
+        final database = db as web.IDBDatabase;
+        if (completer.isCompleted) {
+          database.close();
+        } else {
+          completer.complete(database);
+        }
+      } else if (!completer.isCompleted) {
         completer.completeError(
           const FormatException('IndexedDB open returned no database'),
         );
       }
     }).toJS;
     request.onerror = ((web.Event _) {
-      completer.completeError(
-        StateError(
-          'IndexedDB open failed: ${request.error?.message ?? 'unknown error'}',
-        ),
-      );
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError(
+            'IndexedDB open failed: ${request.error?.message ?? 'unknown error'}',
+          ),
+        );
+      }
     }).toJS;
     request.onblocked = ((web.Event _) {
-      completer.completeError(
-        StateError('IndexedDB open blocked by another tab'),
-      );
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError('IndexedDB open blocked by another tab'),
+        );
+      }
     }).toJS;
     return completer.future;
   }
@@ -128,30 +150,44 @@ final class _IndexedDbWorldByteStore implements WorldByteStore {
 
   Future<JSAny?> _request(web.IDBRequest request) {
     final completer = Completer<JSAny?>();
-    request.onsuccess = ((web.Event _) => completer.complete(
-      request.result,
-    )).toJS;
-    request.onerror = ((web.Event _) => completer.completeError(
-      StateError(
-        'IndexedDB request failed: ${request.error?.message ?? 'unknown error'}',
-      ),
-    )).toJS;
+    request.onsuccess = ((web.Event _) {
+      if (!completer.isCompleted) completer.complete(request.result);
+    }).toJS;
+    request.onerror = ((web.Event _) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError(
+            'IndexedDB request failed: ${request.error?.message ?? 'unknown error'}',
+          ),
+        );
+      }
+    }).toJS;
     return completer.future;
   }
 
   Future<void> _transaction(web.IDBTransaction transaction) {
     final completer = Completer<void>();
-    transaction.oncomplete = ((web.Event _) => completer.complete()).toJS;
-    transaction.onabort = ((web.Event _) => completer.completeError(
-      StateError(
-        'IndexedDB transaction aborted: ${transaction.error?.message ?? 'unknown error'}',
-      ),
-    )).toJS;
-    transaction.onerror = ((web.Event _) => completer.completeError(
-      StateError(
-        'IndexedDB transaction failed: ${transaction.error?.message ?? 'unknown error'}',
-      ),
-    )).toJS;
+    transaction.oncomplete = ((web.Event _) {
+      if (!completer.isCompleted) completer.complete();
+    }).toJS;
+    transaction.onabort = ((web.Event _) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError(
+            'IndexedDB transaction aborted: ${transaction.error?.message ?? 'unknown error'}',
+          ),
+        );
+      }
+    }).toJS;
+    transaction.onerror = ((web.Event _) {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          StateError(
+            'IndexedDB transaction failed: ${transaction.error?.message ?? 'unknown error'}',
+          ),
+        );
+      }
+    }).toJS;
     return completer.future;
   }
 }

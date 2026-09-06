@@ -3,6 +3,7 @@ import 'package:flame_3d/components.dart';
 import 'package:flame_3d/graphics.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:flame_3d/src/graphics/joints_info.dart';
+import 'package:meta/meta.dart';
 
 class RenderContext3D extends RenderContext {
   RenderContext3D(super.device);
@@ -62,22 +63,35 @@ class RenderContext3D extends RenderContext {
 
   /// Sort and execute all deferred draws (back-to-front for alpha blending).
   void flush() {
-    for (var i = 1; i < _drawCount; i++) {
-      final entry = _drawPool[i];
-      var j = i - 1;
-      while (j >= 0 && _drawPool[j].distance < entry.distance) {
-        _drawPool[j + 1] = _drawPool[j];
-        j--;
+    final submittedCount = _drawCount;
+    try {
+      for (var i = 1; i < submittedCount; i++) {
+        final entry = _drawPool[i];
+        var j = i - 1;
+        while (j >= 0 && _drawPool[j].distance < entry.distance) {
+          _drawPool[j + 1] = _drawPool[j];
+          j--;
+        }
+        _drawPool[j + 1] = entry;
       }
-      _drawPool[j + 1] = entry;
-    }
 
-    // Draw and then release the objects in the draw pool.
+      for (var i = 0; i < submittedCount; i++) {
+        _drawPool[i].object!.draw(this);
+      }
+      _lastDrawCount = submittedCount;
+    } finally {
+      discardPendingDraws();
+    }
+  }
+
+  /// Releases submitted component references without drawing them.
+  ///
+  /// World traversal uses this when a component throws before [flush].
+  @internal
+  void discardPendingDraws() {
     for (var i = 0; i < _drawCount; i++) {
-      _drawPool[i].object!.draw(this);
       _drawPool[i].object = null;
     }
-    _lastDrawCount = _drawCount;
     _drawCount = 0;
   }
 

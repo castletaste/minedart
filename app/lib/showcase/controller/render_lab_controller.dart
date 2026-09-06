@@ -13,20 +13,10 @@ enum RenderDebugView {
   final int shaderCode;
 }
 
-enum TextureFiltering {
-  nearest('Nearest'),
-  linear('Linear');
-
-  const TextureFiltering(this.label);
-
-  final String label;
-}
-
 @immutable
 final class RenderLabSettings {
   const RenderLabSettings({
     this.debugView = RenderDebugView.lit,
-    this.filtering = TextureFiltering.nearest,
     this.renderDistance = 6,
     this.fogDensity = 0.55,
     this.ambientOcclusion = true,
@@ -35,7 +25,6 @@ final class RenderLabSettings {
   });
 
   final RenderDebugView debugView;
-  final TextureFiltering filtering;
   final int renderDistance;
   final double fogDensity;
   final bool ambientOcclusion;
@@ -44,7 +33,6 @@ final class RenderLabSettings {
 
   RenderLabSettings copyWith({
     RenderDebugView? debugView,
-    TextureFiltering? filtering,
     int? renderDistance,
     double? fogDensity,
     bool? ambientOcclusion,
@@ -52,12 +40,31 @@ final class RenderLabSettings {
     bool? blockParticles,
   }) => RenderLabSettings(
     debugView: debugView ?? this.debugView,
-    filtering: filtering ?? this.filtering,
     renderDistance: renderDistance ?? this.renderDistance,
     fogDensity: fogDensity ?? this.fogDensity,
     ambientOcclusion: ambientOcclusion ?? this.ambientOcclusion,
     targetOutline: targetOutline ?? this.targetOutline,
     blockParticles: blockParticles ?? this.blockParticles,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is RenderLabSettings &&
+      other.debugView == debugView &&
+      other.renderDistance == renderDistance &&
+      other.fogDensity == fogDensity &&
+      other.ambientOcclusion == ambientOcclusion &&
+      other.targetOutline == targetOutline &&
+      other.blockParticles == blockParticles;
+
+  @override
+  int get hashCode => Object.hash(
+    debugView,
+    renderDistance,
+    fogDensity,
+    ambientOcclusion,
+    targetOutline,
+    blockParticles,
   );
 }
 
@@ -78,9 +85,6 @@ final class RenderLabController extends ChangeNotifier {
   void setDebugView(RenderDebugView value) =>
       _set(_settings.copyWith(debugView: value));
 
-  void setFiltering(TextureFiltering value) =>
-      _set(_settings.copyWith(filtering: value));
-
   void setRenderDistance(double value) =>
       _set(_settings.copyWith(renderDistance: value.round().clamp(2, 16)));
 
@@ -99,6 +103,7 @@ final class RenderLabController extends ChangeNotifier {
   void reset() => _set(const RenderLabSettings());
 
   void _set(RenderLabSettings value) {
+    if (_settings == value) return;
     _settings = value;
     onChanged?.call(value);
     notifyListeners();

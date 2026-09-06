@@ -47,17 +47,25 @@ final class MouseSecondaryPressed extends MouseLookEvent {
 
 /// Typed wrapper around the macOS relative-mouse platform channels.
 final class MouseLook {
-  MouseLook({MethodChannel? methods, EventChannel? nativeEvents})
-    : _methods = methods ?? const MethodChannel('minedart/mouse'),
-      _nativeEvents =
-          nativeEvents ?? const EventChannel('minedart/mouse/events');
+  MouseLook({
+    MethodChannel? methods,
+    EventChannel? nativeEvents,
+    Stream<Object?>? nativeEventStream,
+  }) : _methods = methods ?? const MethodChannel('minedart/mouse'),
+       _nativeEvents =
+           nativeEventStream ??
+           (nativeEvents ?? const EventChannel('minedart/mouse/events'))
+               .receiveBroadcastStream();
 
   final MethodChannel _methods;
-  final EventChannel _nativeEvents;
+  final Stream<Object?> _nativeEvents;
   final StreamController<MouseLookEvent> _events =
       StreamController<MouseLookEvent>.broadcast(sync: true);
 
   StreamSubscription<Object?>? _nativeSubscription;
+  Future<bool>? _capture;
+  Future<void>? _closing;
+  int _captureGeneration = 0;
   bool _started = false;
   bool _closed = false;
   bool _captured = false;
@@ -68,38 +76,90 @@ final class MouseLook {
   void start() {
     if (_started || _closed) return;
     _started = true;
-    _nativeSubscription = _nativeEvents.receiveBroadcastStream().listen(
+    _nativeSubscription = _nativeEvents.listen(
       _handleNativeEvent,
       onError: _events.addError,
     );
   }
 
-  Future<bool> capture() async {
-    final result = await _methods.invokeMapMethod<String, Object?>('capture');
-    final captured = result?['captured'] == true;
-    _setCaptured(captured);
-    return captured;
+  Future<bool> capture() {
+    if (_closed) return Future<bool>.value(false);
+    if (_capture case final pending?) return pending;
+    final generation = _captureGeneration;
+    final Future<Map<String, Object?>?> request;
+    try {
+      request = _methods.invokeMapMethod<String, Object?>('capture');
+    } catch (error, stack) {
+      return Future<bool>.error(error, stack);
+    }
+    return _capture = _completeCapture(request, generation);
   }
 
-  Future<void> release() async {
-    await _methods.invokeMethod<void>('release');
+  Future<bool> _completeCapture(
+    Future<Map<String, Object?>?> request,
+    int generation,
+  ) async {
+    try {
+      final result = await request;
+      final captured = result?['captured'] == true;
+      if (_closed || generation != _captureGeneration) {
+        if (captured) await _releaseNative();
+        return false;
+      }
+      _setCaptured(captured);
+      return captured;
+    } finally {
+      _capture = null;
+    }
+  }
+
+  Future<void> release() {
+    if (_closed) return Future<void>.value();
+    _captureGeneration++;
+    return _releaseAndUpdate();
+  }
+
+  Future<void> _releaseAndUpdate() async {
+    await _releaseNative();
     _setCaptured(false);
   }
 
-  Future<void> close() async {
-    if (_closed) return;
-    if (_captured) {
+  Future<void> _releaseNative() => _methods.invokeMethod<void>('release');
+
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
+    _closed = true;
+    _captureGeneration++;
+    final pendingCapture = _capture;
+    final failures = <({Object error, StackTrace stack})>[];
+
+    Future<void> attempt(Future<void> Function() operation) async {
       try {
-        await release();
-      } on PlatformException {
-        // Native window teardown also restores the cursor association.
+        await operation();
       } on MissingPluginException {
-        // Non-macOS targets do not install the native bridge.
+        // Platforms without the native bridge own no cursor or event port.
+      } catch (error, stack) {
+        failures.add((error: error, stack: stack));
       }
     }
-    _closed = true;
-    await _nativeSubscription?.cancel();
-    await _events.close();
+
+    await attempt(_releaseNative);
+    if (pendingCapture != null) {
+      await attempt(() async {
+        await pendingCapture;
+      });
+    }
+    _captured = false;
+    await attempt(() async {
+      await _nativeSubscription?.cancel();
+    });
+    unawaited(_events.close());
+
+    if (failures.isNotEmpty) {
+      final first = failures.first;
+      Error.throwWithStackTrace(first.error, first.stack);
+    }
   }
 
   void _handleNativeEvent(Object? rawEvent) {

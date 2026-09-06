@@ -29,6 +29,8 @@ final class NativeWorldRepository extends StoredWorldRepository {
 final class _NativeWorldByteStore implements WorldByteStore {
   _NativeWorldByteStore(this.root);
 
+  static int _nextTemporaryId = 0;
+
   final Directory root;
 
   @override
@@ -59,9 +61,14 @@ final class _NativeWorldByteStore implements WorldByteStore {
   Future<void> write(String id, Uint8List bytes) async {
     final file = _fileFor(id);
     await root.create(recursive: true);
-    final temp = File('${file.path}.tmp');
-    await temp.writeAsBytes(bytes, flush: true);
-    await temp.rename(file.path);
+    final temporaryId = _nextTemporaryId++;
+    final temp = File('${file.path}.$pid.$temporaryId.tmp');
+    try {
+      await temp.writeAsBytes(bytes, flush: true);
+      await temp.rename(file.path);
+    } finally {
+      if (await temp.exists()) await temp.delete();
+    }
   }
 
   @override

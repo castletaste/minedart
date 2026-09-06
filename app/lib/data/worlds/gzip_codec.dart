@@ -9,5 +9,5 @@ import 'gzip_codec_stub.dart'
 
 Future<Uint8List> gzipEncode(Uint8List bytes) =>
     implementation.gzipEncode(bytes);
-Future<Uint8List> gzipDecode(Uint8List bytes) =>
-    implementation.gzipDecode(bytes);
+Future<Uint8List> gzipDecode(Uint8List bytes, {required int maxOutputBytes}) =>
+    implementation.gzipDecode(bytes, maxOutputBytes: maxOutputBytes);
