@@ -28,7 +28,7 @@ supported; the publisher still rejects fork heads and foreign base repositories.
 
 ## One-time setup
 
-1. Create a GitHub environment named `preview`.
+1. Use the existing GitHub environment named `production` for both publishers.
 2. Under **Deployment branches and tags**, choose **Selected branches and
    tags**, then add the exact branch rule `main`. Do not use **Protected
    branches only**: when the repository has no branch-protection rule, GitHub
@@ -37,27 +37,36 @@ supported; the publisher still rejects fork heads and foreign base repositories.
    `deployment_branch_policy.protected_branches: false` and
    `deployment_branch_policy.custom_branch_policies: true`, with exactly one
    custom policy: the branch `main`.
-3. Add `CLOUDFLARE_API_TOKEN` as an environment secret. Use a Cloudflare token
-   limited to `Account > Cloudflare Pages > Edit` for the account containing the
-   `castletaste-minedart` project.
+3. Keep the existing `CLOUDFLARE_API_TOKEN` environment secret in `production`.
+   The token only needs `Account > Cloudflare Pages > Edit` for the account
+   containing the `castletaste-minedart` project. No separate preview token or
+   copy of its value is required.
 4. Keep `CLOUDFLARE_ACCOUNT_ID` as the existing repository secret.
 5. Merge the preview infrastructure before expecting automatic previews.
 
-Do not add the preview token until the exact-`main` deployment policy is in
-place and verified. An environment with no policy is not a safe credential
-boundary for workflows stored on other same-repository branches.
+Verify the exact-`main` deployment policy before enabling the preview publisher.
+An environment with no policy is not a safe credential boundary for workflows
+stored on other same-repository branches. Keep the deployment token as an
+environment secret, not a repository secret.
+
+Both publishers use the same credential, so rotating or revoking it affects both
+production and previews. Preview jobs inherit any reviewers and wait timers on
+`production`, and GitHub records them in that environment's deployment history.
+Their Cloudflare destination remains the `pr-<number>` branch specified in the
+publish command. The separate `preview` GitHub environment is not used.
 
 Wrangler `4.125.0` is installed from the trusted, committed lockfile with
 `npm ci` and lifecycle scripts disabled before the Cloudflare token is passed
 to the pinned deployment action. The action finds that exact local version and
 does not install packages in its credentialed step. Artifact downloads
-explicitly fail on digest mismatch. No dependency or artifact cache crosses
-preview runs.
+explicitly fail on digest mismatch. Sanitized artifact names include both the
+publisher run ID and its attempt number, so **Re-run all jobs** does not collide
+with an earlier attempt's immutable artifact. The deployment job consumes the
+returned artifact ID. No dependency or artifact cache crosses preview runs.
 
 The production deployment uses the same locked, no-credential installation
-boundary. Its workflow guard accepts only `refs/heads/main`; the separate
-`production` environment must also select the exact `main` branch before its
-token is available.
+boundary. Its workflow guard accepts only `refs/heads/main`, and the shared
+`production` environment enforces the exact `main` branch for both publishers.
 
 The workflow does not run retroactively when first added to the default branch.
 To bootstrap an already verified pull request, manually run **Publish Minedart

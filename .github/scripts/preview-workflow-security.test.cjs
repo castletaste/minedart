@@ -21,6 +21,25 @@ const lockfile = JSON.parse(
   ),
 );
 
+test('shares deployment credentials only after unprivileged preview validation', () => {
+  const validateJob = workflow.indexOf('\n  validate:');
+  const deployJob = workflow.indexOf('\n  deploy:');
+  assert.ok(validateJob >= 0);
+  assert.ok(deployJob > validateJob);
+
+  const validation = workflow.slice(validateJob, deployJob);
+  const deployment = workflow.slice(deployJob);
+  assert.doesNotMatch(validation, /environment:|secrets\.CLOUDFLARE_/);
+  assert.match(deployment, /needs: validate/);
+  assert.match(deployment, /environment:\s*\n\s*name: production\s*\n/);
+  assert.match(deployment, /apiToken: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
+  assert.match(
+    deployment,
+    /--branch=pr-\$\{\{ needs\.validate\.outputs\.pr_number \}\}/,
+  );
+  assert.doesNotMatch(deployment, /--branch[= ]main\b/);
+});
+
 test('installs the locked Wrangler before any Cloudflare credential is exposed', () => {
   const installStep = workflow.indexOf(
     '- name: Install pinned Wrangler without deployment credentials',
