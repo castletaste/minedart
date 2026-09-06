@@ -33,6 +33,7 @@ class HudOverlay extends StatefulWidget {
     required this.onPrimary,
     required this.onSecondary,
     this.frameMetrics,
+    this.touchControls,
     super.key,
   });
 
@@ -48,6 +49,9 @@ class HudOverlay extends StatefulWidget {
   final VoidCallback onSecondary;
   final FrameMetrics? frameMetrics;
 
+  /// Gesture controls are supplied by the runtime host, which owns callbacks.
+  final Widget? touchControls;
+
   @override
   State<HudOverlay> createState() => _HudOverlayState();
 }
@@ -56,49 +60,46 @@ class _HudOverlayState extends State<HudOverlay> {
   /// Accumulated two-finger trackpad scroll; a slot switch fires per step.
   double _panAccum = 0;
   static const double _panStep = 48;
-  final GlobalKey _hotbarKey = GlobalKey(debugLabel: 'interactive hotbar');
 
   @override
   Widget build(BuildContext context) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _handlePointerDown,
-      onPointerSignal: _handlePointerSignal,
-      onPointerPanZoomStart: _handlePanZoomStart,
-      onPointerPanZoomUpdate: _handlePanZoomUpdate,
-      child: Stack(
-        fit: StackFit.expand,
-        children: <Widget>[
-          const Crosshair(),
-          Hotbar(hud: widget.hud, interactionKey: _hotbarKey),
-          IgnorePointer(
-            child: DebugOverlay(
-              hud: widget.hud,
-              frameMetrics: widget.frameMetrics,
-            ),
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _handlePointerDown,
+          onPointerSignal: _handlePointerSignal,
+          onPointerPanZoomStart: _handlePanZoomStart,
+          onPointerPanZoomUpdate: _handlePanZoomUpdate,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              const Crosshair(),
+              IgnorePointer(
+                child: DebugOverlay(
+                  hud: widget.hud,
+                  frameMetrics: widget.frameMetrics,
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        ?widget.touchControls,
+        // A sibling hit target keeps hotbar clicks out of gameplay capture.
+        Hotbar(hud: widget.hud, touchControls: widget.touchControls != null),
+      ],
     );
   }
 
   void _handlePointerDown(PointerDownEvent event) {
     if (event.kind != PointerDeviceKind.mouse) return;
-    if (_isOverHotbar(event.position)) return;
     widget.onCapture();
     if (event.buttons & kPrimaryMouseButton != 0) {
       widget.onPrimary();
     } else if (event.buttons & kSecondaryMouseButton != 0) {
       widget.onSecondary();
     }
-  }
-
-  bool _isOverHotbar(Offset globalPosition) {
-    final renderObject = _hotbarKey.currentContext?.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) return false;
-    return (Offset.zero & renderObject.size).contains(
-      renderObject.globalToLocal(globalPosition),
-    );
   }
 
   void _handlePointerSignal(PointerSignalEvent event) {

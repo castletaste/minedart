@@ -67,6 +67,7 @@ final class ControlsHint extends StatelessWidget {
     this.title = 'Controls',
     this.maxColumns = 3,
     this.controller,
+    this.touchControls = false,
     super.key,
   });
 
@@ -78,6 +79,7 @@ final class ControlsHint extends StatelessWidget {
 
   /// When supplied, the legend follows the user's current key bindings.
   final OptionsController? controller;
+  final bool touchControls;
 
   static const List<ControlsHintEntry> entries = <ControlsHintEntry>[
     ControlsHintEntry(keys: 'WASD', action: 'Move', spokenKeys: 'W A S D'),
@@ -105,6 +107,31 @@ final class ControlsHint extends StatelessWidget {
     ControlsHintEntry(keys: 'Esc', action: 'Pause', spokenKeys: 'Escape'),
   ];
 
+  static const touchEntries = <ControlsHintEntry>[
+    ControlsHintEntry(keys: 'Stick', action: 'Move', spokenKeys: 'Left stick'),
+    ControlsHintEntry(
+      keys: 'Full ↑',
+      action: 'Sprint',
+      spokenKeys: 'Push stick fully forward',
+    ),
+    ControlsHintEntry(
+      keys: 'Drag',
+      action: 'Look',
+      spokenKeys: 'Drag the world',
+    ),
+    ControlsHintEntry(keys: '↑', action: 'Jump', spokenKeys: 'Up arrow button'),
+    ControlsHintEntry(
+      keys: '− / +',
+      action: 'Break / place',
+      spokenKeys: 'Minus and plus buttons',
+    ),
+    ControlsHintEntry(
+      keys: 'Slots',
+      action: 'Select block',
+      spokenKeys: 'Swipe and tap hotbar slots',
+    ),
+  ];
+
   /// Single spoken summary for the whole legend.
   static String get semanticsSummary {
     return _semanticsSummary(entries);
@@ -119,6 +146,7 @@ final class ControlsHint extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (touchControls) return _buildLegend(context, touchEntries);
     final options = controller;
     if (options == null) return _buildLegend(context, entries);
     return AnimatedBuilder(

@@ -74,3 +74,6 @@ After deployment, verify that the document response includes
 `Cross-Origin-Opener-Policy: same-origin`, the Wasm response uses
 `Content-Type: application/wasm`, `window.crossOriginIsolated` is `true`, and
 the browser fetches `main.dart.wasm` rather than falling back to `main.dart.js`.
+
+Touch controls, ownership boundaries, and validation are described in
+[`docs/touch-controls.md`](../docs/touch-controls.md).

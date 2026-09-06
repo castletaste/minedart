@@ -37,31 +37,54 @@ base class GpuBackend extends base.GpuBackend {
 
   /// {@macro web_gpu_backend}
   ///
-  /// Throws [UnsupportedError] if WebGPU is unavailable in this browser.
+  /// Throws [base.GpuInitializationException] when WebGPU cannot start.
   static Future<void> initialize() async {
     final gpu = webGPU;
     if (gpu == null) {
-      throw UnsupportedError('WebGPU is not available in this browser.');
+      throw const base.GpuInitializationException(
+        base.GpuInitializationFailureKind.apiUnavailable,
+      );
     }
 
-    var adapter = await gpu.requestAdapter();
-    adapter ??= await gpu.requestAdapter(
-      GPURequestAdapterOptions(forceFallbackAdapter: true),
-    );
+    GPUAdapter? adapter;
+    try {
+      adapter = await gpu.requestAdapter();
+      adapter ??= await gpu.requestAdapter(
+        GPURequestAdapterOptions(forceFallbackAdapter: true),
+      );
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        base.GpuInitializationException(
+          base.GpuInitializationFailureKind.adapterUnavailable,
+          cause: error,
+        ),
+        stackTrace,
+      );
+    }
 
     if (adapter == null) {
-      throw UnsupportedError('No WebGPU adapter is available.');
+      throw const base.GpuInitializationException(
+        base.GpuInitializationFailureKind.adapterUnavailable,
+      );
     }
 
-    final device = await adapter.requestDevice()
-      ..addEventListener(
-        'uncapturederror',
-        (GPUUncapturedErrorEvent event) {
-          final error = event.error;
-          // ignore: avoid_print
-          print('[WebGPU] uncaptured error: ${error.message}');
-        },
+    late final GPUDevice device;
+    try {
+      device = await adapter.requestDevice();
+    } catch (error, stackTrace) {
+      Error.throwWithStackTrace(
+        base.GpuInitializationException(
+          base.GpuInitializationFailureKind.deviceUnavailable,
+          cause: error,
+        ),
+        stackTrace,
       );
+    }
+    device.addEventListener('uncapturederror', (GPUUncapturedErrorEvent event) {
+      final error = event.error;
+      // ignore: avoid_print
+      print('[WebGPU] uncaptured error: ${error.message}');
+    });
 
     GpuBackend._(device, await _loadShaderBundles());
   }

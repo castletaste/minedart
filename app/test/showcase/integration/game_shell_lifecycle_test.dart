@@ -56,6 +56,73 @@ void main() {
     await harness.unmount(tester);
   });
 
+  testWidgets(
+    'touch activation and explicit override belong to the shell',
+    (tester) async {
+      final harness = await _Harness.create();
+      final options = OptionsController();
+      addTearDown(options.dispose);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: GameShell(
+            repository: harness.repository,
+            audio: harness.audio,
+            initialRuntime: harness.runtime,
+            options: options,
+          ),
+        ),
+      );
+      harness.runtime.game.onRemove();
+      await tester.pump();
+      tester
+          .state<ScaffoldMessengerState>(find.byType(ScaffoldMessenger))
+          .clearSnackBars();
+      await tester.pump();
+      expect(
+        tester
+            .widget<GameRuntimeHost>(find.byType(GameRuntimeHost))
+            .touchControls,
+        isFalse,
+      );
+      await tester.tapAt(const Offset(400, 350));
+      await tester.pump();
+      expect(
+        tester
+            .widget<GameRuntimeHost>(find.byType(GameRuntimeHost))
+            .touchControls,
+        isTrue,
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<GameRuntimeHost>(find.byType(GameRuntimeHost))
+            .touchControls,
+        isFalse,
+        reason: 'Modal removes the gesture owners',
+      );
+      final pause = tester.widget<PauseOptionsView>(
+        find.byType(PauseOptionsView),
+      );
+      expect(pause.touchControls, isTrue);
+      pause.onTouchControlsChanged!(false);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(400, 350));
+      await tester.pump();
+      expect(
+        tester
+            .widget<GameRuntimeHost>(find.byType(GameRuntimeHost))
+            .touchControls,
+        isFalse,
+        reason: 'A manual choice survives later touch events',
+      );
+      await harness.unmount(tester);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+  );
+
   testWidgets('pause dialog resolves the Navigator below MaterialApp', (
     tester,
   ) async {

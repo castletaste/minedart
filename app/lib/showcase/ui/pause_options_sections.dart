@@ -7,6 +7,8 @@ final class _PauseSectionContent extends StatelessWidget {
     required this.controller,
     required this.callbacks,
     required this.onStartRebinding,
+    required this.touchControls,
+    required this.onTouchControlsChanged,
   });
 
   final PauseOptionsSection section;
@@ -14,6 +16,8 @@ final class _PauseSectionContent extends StatelessWidget {
   final OptionsController controller;
   final PauseMenuCallbacks callbacks;
   final ValueChanged<GameInputAction> onStartRebinding;
+  final bool touchControls;
+  final ValueChanged<bool>? onTouchControlsChanged;
 
   @override
   Widget build(BuildContext context) => switch (section) {
@@ -54,7 +58,7 @@ final class _PauseSectionContent extends StatelessWidget {
               label: 'Render Lab',
             ),
             const SizedBox(height: 14),
-            ControlsHint(controller: controller),
+            ControlsHint(controller: controller, touchControls: touchControls),
             const SizedBox(height: 18),
             _BlockButton(
               key: PauseOptionsKeys.saveAndQuit,
@@ -72,6 +76,13 @@ final class _PauseSectionContent extends StatelessWidget {
   Widget _controls(BuildContext context) => ListView(
     padding: const EdgeInsets.all(16),
     children: <Widget>[
+      if (onTouchControlsChanged != null)
+        SwitchListTile(
+          title: const Text('Touch controls'),
+          subtitle: const Text('Show the movement stick and action buttons'),
+          value: touchControls,
+          onChanged: onTouchControlsChanged,
+        ),
       ShowcasePanel(
         title: 'Mouse',
         child: Column(

@@ -251,32 +251,71 @@ final class _StartupFailure extends StatelessWidget {
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.all(24),
-    child: ConstrainedBox(
-      constraints: const BoxConstraints(maxWidth: 520),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline, size: 48),
-          const SizedBox(height: 16),
-          Text(
-            'Minedart could not start',
-            style: Theme.of(context).textTheme.headlineSmall,
-            textAlign: TextAlign.center,
+  Widget build(BuildContext context) {
+    final message = _startupFailureMessage(error);
+    return Semantics(
+      liveRegion: true,
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                message.title,
+                style: Theme.of(context).textTheme.headlineSmall,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(message.description, textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text('$error', textAlign: TextAlign.center),
-          const SizedBox(height: 20),
-          FilledButton.icon(
-            onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
-            label: const Text('Retry'),
-          ),
-        ],
+        ),
       ),
+    );
+  }
+}
+
+final class _StartupFailureMessage {
+  const _StartupFailureMessage(this.title, this.description);
+
+  final String title;
+  final String description;
+}
+
+_StartupFailureMessage _startupFailureMessage(Object error) {
+  if (error is! GpuInitializationException) {
+    return const _StartupFailureMessage(
+      'Minedart could not start',
+      'The game could not finish loading. Check your connection and try again.',
+    );
+  }
+
+  return switch (error.kind) {
+    GpuInitializationFailureKind.apiUnavailable => const _StartupFailureMessage(
+      'WebGPU is unavailable',
+      'Update your browser and make sure hardware acceleration is enabled.',
     ),
-  );
+    GpuInitializationFailureKind.adapterUnavailable =>
+      const _StartupFailureMessage(
+        'No compatible graphics adapter',
+        'Enable hardware acceleration or try another supported browser.',
+      ),
+    GpuInitializationFailureKind.deviceUnavailable =>
+      const _StartupFailureMessage(
+        'Graphics could not start',
+        'Close other graphics-heavy tabs, then try again.',
+      ),
+  };
 }
 
 Future<WorldDocument> loadInitialWorld(
