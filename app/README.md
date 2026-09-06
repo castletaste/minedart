@@ -58,19 +58,31 @@ CDN, copies the Cloudflare `_headers` file, and checks the current Pages limits.
 
 ## Cloudflare Pages deployment
 
-The manual GitHub Actions workflow at `.github/workflows/deploy-web.yml` expects:
+The GitHub Actions workflow at `.github/workflows/deploy-web.yml` expects:
 
 - a Direct Upload Pages project named `castletaste-minedart` with production
   branch `main`;
 - the custom domain `minedart.castletaste.dev` attached to that project;
-- repository secrets `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`; the
-  token only needs `Account > Cloudflare Pages > Edit`.
+- repository secret `CLOUDFLARE_ACCOUNT_ID`;
+- environment secret `CLOUDFLARE_API_TOKEN` in the protected `production`
+  environment. Under **Deployment branches and tags**, select only the exact
+  branch `main`; do not rely on **Protected branches only** when the repository
+  has no branch-protection rule. The token only needs
+  `Account > Cloudflare Pages > Edit`.
 
-The workflow is intentionally manual. Creating the Pages project, configuring
-DNS/secrets, and running the first deployment are external production actions.
+Creating the Pages project and configuring DNS, environments, and secrets are
+external production actions.
 
 After deployment, verify that the document response includes
 `Cross-Origin-Embedder-Policy: credentialless` and
 `Cross-Origin-Opener-Policy: same-origin`, the Wasm response uses
 `Content-Type: application/wasm`, `window.crossOriginIsolated` is `true`, and
 the browser fetches `main.dart.wasm` rather than falling back to `main.dart.js`.
+
+Pull request previews use a separate trusted publisher so Cloudflare credentials
+are never exposed to pull request code. That publisher reuses the existing
+`production` environment token after validation and publishes to `pr-<number>`
+branches in Pages. Both publishers require the environment's exact-`main`
+deployment policy. See
+[`docs/pr-preview-deployments.md`](../docs/pr-preview-deployments.md) for the
+security boundary, one-time environment setup, and bootstrap procedure.
