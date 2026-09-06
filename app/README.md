@@ -80,6 +80,9 @@ After deployment, verify that the document response includes
 the browser fetches `main.dart.wasm` rather than falling back to `main.dart.js`.
 
 Pull request previews use a separate trusted publisher so Cloudflare credentials
-are never exposed to pull request code. See
+are never exposed to pull request code. That publisher reuses the existing
+`production` environment token after validation and publishes to `pr-<number>`
+branches in Pages. Both publishers require the environment's exact-`main`
+deployment policy. See
 [`docs/pr-preview-deployments.md`](../docs/pr-preview-deployments.md) for the
 security boundary, one-time environment setup, and bootstrap procedure.
