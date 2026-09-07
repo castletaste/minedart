@@ -1,23 +1,33 @@
 import 'package:flutter/foundation.dart';
+import 'package:minedart_core/minedart_core.dart' show WorldDims;
 
 /// Classic fog distances in world-space blocks.
 enum FogPreset {
-  near(fogStart: 24, fogEnd: 48),
-  normal(fogStart: 48, fogEnd: 96),
-  far(fogStart: 96, fogEnd: 160),
-  off(fogStart: 1000, fogEnd: 1001);
+  near('Near', fogStart: 24, fogEnd: 48),
+  normal('Normal', fogStart: 48, fogEnd: 96),
+  far('Far', fogStart: 96, fogEnd: 160),
+  off('Off', fogStart: 1000, fogEnd: 1001);
 
-  const FogPreset({required this.fogStart, required this.fogEnd});
+  const FogPreset(this.label, {required this.fogStart, required this.fogEnd});
 
   /// Compatibility names useful to settings UIs.
   static const FogPreset short = near;
   static const FogPreset medium = normal;
   static const FogPreset classic = far;
 
+  final String label;
   final double fogStart;
   final double fogEnd;
 
   bool get enabled => this != off;
+
+  /// Chunk radius paired with this visual preset.
+  int get renderDistanceChunks => switch (this) {
+    near => 3,
+    normal => 6,
+    far => 10,
+    off => WorldDims.worldChunksX,
+  };
 
   FogPreset get next => values[(index + 1) % values.length];
 }

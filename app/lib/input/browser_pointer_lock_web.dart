@@ -16,30 +16,36 @@ final class BrowserPointerLock {
 
   BrowserPointerLock._(this._isLockedOverride) {
     _mouseMoveListener = ((web.Event event) {
-      if (!isLocked) return;
+      if (_disposed || !isLocked) return;
       final mouse = event as web.MouseEvent;
       _events.add(MouseDelta(mouse.movementX, mouse.movementY));
     }).toJS;
     _lockChangeListener = ((web.Event _) {
+      if (_disposed) return;
       final locked = isLocked;
+      if (!locked) {
+        _released?.complete();
+        _released = null;
+      }
       if (_lastLocked == locked) return;
       _lastLocked = locked;
       _events.add(MouseCaptureChanged(captured: locked));
     }).toJS;
     _lockErrorListener = ((web.Event _) {
+      if (_disposed) return;
       _lastLocked = false;
       _events.add(const MouseCaptureChanged(captured: false));
     }).toJS;
     _pointerDownListener = ((web.Event event) {
       try {
-        if (!isLocked) return;
+        if (_disposed || !isLocked) return;
         final pointer = event as web.PointerEvent;
         if (pointer.button == 0) {
           event.preventDefault();
           _events.add(const MousePrimaryPressed());
         } else if (pointer.button == 2) {
           event.preventDefault();
-          _emitSecondary();
+          _events.add(const MouseSecondaryPressed());
         }
       } on Object catch (error, stackTrace) {
         debugPrint('Browser pointerdown failed: $error\n$stackTrace');
@@ -47,9 +53,10 @@ final class BrowserPointerLock {
     }).toJS;
     _contextMenuListener = ((web.Event event) {
       try {
-        if (!isLocked) return;
+        if (_disposed || !isLocked) return;
         event.preventDefault();
-        _emitSecondary();
+        // Pointerdown owns the action. Contextmenu may arrive much later and
+        // must neither duplicate it nor suppress a distinct rapid click.
       } on Object catch (error, stackTrace) {
         debugPrint('Browser contextmenu failed: $error\n$stackTrace');
       }
@@ -71,32 +78,43 @@ final class BrowserPointerLock {
   late final web.EventListener _pointerDownListener;
   late final web.EventListener _contextMenuListener;
   bool _lastLocked = false;
-  int _lastSecondaryMicros = 0;
+  bool _disposed = false;
+  Completer<void>? _released;
 
   bool get isLocked =>
       _isLockedOverride?.call() ?? web.document.pointerLockElement != null;
   Stream<MouseLookEvent> get events => _events.stream;
 
-  void _emitSecondary() {
-    final now = DateTime.now().microsecondsSinceEpoch;
-    if (now - _lastSecondaryMicros < 150000) return;
-    _lastSecondaryMicros = now;
-    _events.add(const MouseSecondaryPressed());
-  }
-
   Future<void> capture() async {
-    if (isLocked) return;
+    if (_disposed || isLocked) return;
     final target = web.document.body ?? web.document.documentElement;
     if (target == null) return;
     await target.requestPointerLock().toDart;
+    if (_disposed) release();
   }
 
   void release() {
     if (isLocked) web.document.exitPointerLock();
   }
 
-  void dispose() {
+  Future<void> releaseAndWait() async {
+    if (!isLocked) return;
+    final released = _released ??= Completer<void>();
     release();
+    await released.future.timeout(const Duration(seconds: 5));
+  }
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    release();
+    final released = _released;
+    if (released != null && !released.isCompleted) {
+      released.completeError(
+        StateError('Pointer lock disposed during release'),
+      );
+    }
+    _released = null;
     web.document
       ..removeEventListener('mousemove', _mouseMoveListener)
       ..removeEventListener('pointerdown', _pointerDownListener)

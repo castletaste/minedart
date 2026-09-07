@@ -34,6 +34,25 @@ void main() {
     expect(decoded.toVoxelWorld().blockAt(0, 0, 0), Blocks.bedrock);
   });
 
+  test('document keeps public blocks defensive and codec view immutable', () {
+    final source = Uint16List(WorldDocument.blockCount)..[0] = Blocks.stone;
+    final document = WorldDocument(metadata: metadata, blocks: source);
+    source[0] = Blocks.dirt;
+
+    expect(document.blocks[0], Blocks.stone);
+    expect(
+      () => document.unmodifiableBlocks[0] = Blocks.dirt,
+      throwsUnsupportedError,
+    );
+    expect(
+      () => document.unmodifiableBlocks.buffer.asUint16List()[0] = Blocks.dirt,
+      throwsUnsupportedError,
+    );
+    final publicCopy = document.blocks..[0] = Blocks.grass;
+    expect(publicCopy[0], Blocks.grass);
+    expect(document.blocks[0], Blocks.stone);
+  });
+
   test(
     'MDRT2 preserves all liquid metadata and additive obsidian id',
     () async {
@@ -129,4 +148,26 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test(
+    'gzip expansion is rejected before accumulating beyond world size',
+    () async {
+      final oversized = Uint8List(WorldDocument.blockCount * 2 + 1);
+      final compressed = gzip.encode(oversized);
+      final bytes = Uint8List(13 + compressed.length)
+        ..setRange(0, 5, <int>[0x4d, 0x44, 0x52, 0x54, 0x31])
+        ..setRange(13, 13 + compressed.length, compressed);
+
+      await expectLater(
+        MdrtCodec.decode(bytes, legacyMetadata: metadata),
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'message',
+            contains('exceeds'),
+          ),
+        ),
+      );
+    },
+  );
 }

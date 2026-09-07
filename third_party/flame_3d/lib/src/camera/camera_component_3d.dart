@@ -1,5 +1,6 @@
 import 'package:flame_3d/camera.dart';
 import 'package:flame_3d/game.dart';
+import 'package:meta/meta.dart';
 
 enum CameraProjection { perspective, orthographic }
 
@@ -92,8 +93,40 @@ class CameraComponent3D extends CameraComponent {
   final Matrix4 _viewProjectionMatrix = Matrix4.zero();
 
   /// The frustum of the [viewProjectionMatrix].
-  Frustum get frustum => _frustum..setFromMatrix(viewProjectionMatrix);
+  ///
+  /// Outside a render traversal this always reflects current camera fields.
+  /// [withFrustumCacheForRender] reuses one calculation within a traversal.
+  Frustum get frustum {
+    if (!_cacheFrustum || !_frustumValid) {
+      _frustum.setFromMatrix(viewProjectionMatrix);
+      _frustumValid = true;
+    }
+    return _frustum;
+  }
+
   final Frustum _frustum = Frustum();
+  bool _cacheFrustum = false;
+  bool _frustumValid = false;
+
+  /// Runs one world traversal with a stable, allocation-free frustum value.
+  ///
+  /// Camera inputs are sampled on the first [frustum] access. The cache scope
+  /// is reset even when component rendering throws.
+  @internal
+  void withFrustumCacheForRender(void Function() render) {
+    if (_cacheFrustum) {
+      render();
+      return;
+    }
+    _cacheFrustum = true;
+    _frustumValid = false;
+    try {
+      render();
+    } finally {
+      _cacheFrustum = false;
+      _frustumValid = false;
+    }
+  }
 
   /// Rotates the camera's yaw and pitch.
   ///

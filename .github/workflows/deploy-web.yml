@@ -1,4 +1,4 @@
-name: Deploy Minedart web
+name: Verify and deploy Minedart web
 
 on:
   push:
@@ -52,6 +52,10 @@ jobs:
         working-directory: packages/core
         run: dart analyze
 
+      - name: Check core formatting
+        working-directory: packages/core
+        run: dart format --output=none --set-exit-if-changed lib test
+
       - name: Test core
         working-directory: packages/core
         run: dart test
@@ -84,9 +88,17 @@ jobs:
         working-directory: app
         run: flutter analyze
 
+      - name: Check app formatting
+        working-directory: app
+        run: dart format --output=none --set-exit-if-changed lib test
+
       - name: Test app
         working-directory: app
         run: flutter test
+
+      - name: Test browser input and bounded decompression
+        working-directory: app
+        run: flutter test --platform chrome test/input/browser_pointer_lock_web_test.dart test/data/worlds/gzip_codec_test.dart
 
       - name: Build and verify Wasm release
         working-directory: app

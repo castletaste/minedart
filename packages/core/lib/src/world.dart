@@ -59,6 +59,7 @@ final class VoxelWorld {
   /// vertically).
   Set<int> setBlock(int x, int y, int z, int raw) {
     if (!inBounds(x, y, z)) return const {};
+    validateRawBlock(raw);
     final dirty = <int>{};
     final cx = x >> 4, cy = y >> 4, cz = z >> 4;
     final chunk = chunkAt(cx, cy, cz);
@@ -88,6 +89,18 @@ final class VoxelWorld {
   static bool _blocksLight(int raw) {
     final def = blockDefs[Blocks.id(raw)];
     return def != null && def.blocksLight;
+  }
+
+  /// Rejects values that cannot be represented by the current world format.
+  /// Callers that build compound edits can validate before recording state.
+  static void validateRawBlock(int raw) {
+    if (raw < 0 || raw > 0xffff) {
+      throw RangeError.range(raw, 0, 0xffff, 'raw');
+    }
+    final id = Blocks.id(raw);
+    if (id >= Blocks.count) {
+      throw RangeError.range(id, 0, Blocks.count - 1, 'block id');
+    }
   }
 
   /// Recomputes the whole skylight heightmap (after worldgen/load).

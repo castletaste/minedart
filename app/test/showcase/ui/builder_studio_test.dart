@@ -91,12 +91,8 @@ void main() {
     expect(find.textContaining('Replace slot 5'), findsOneWidget);
     final displaced = controller.hotbar[4];
 
-    final button = tester.widget<OutlinedButton>(
-      find.byKey(BuilderStudioKeys.block(chosen.id)),
-    );
-    button.focusNode!.requestFocus();
-    await tester.pump();
-    expect(button.focusNode!.hasFocus, isTrue);
+    final button = find.byKey(BuilderStudioKeys.block(chosen.id));
+    await _focusWithTab(tester, button);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump();
@@ -135,6 +131,33 @@ void main() {
     expect(closeCount, 2);
   });
 
+  testWidgets('custom inventory binding replaces E as the close shortcut', (
+    tester,
+  ) async {
+    _setViewport(tester, width: 800, height: 700);
+    final controller = BuilderStudioController();
+    addTearDown(controller.dispose);
+    var closeCount = 0;
+
+    await tester.pumpWidget(
+      _app(
+        BuilderStudioView(
+          controller: controller,
+          onClose: () => closeCount++,
+          closeKey: LogicalKeyboardKey.keyK,
+        ),
+      ),
+    );
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+    await tester.pump();
+    expect(closeCount, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+    await tester.pump();
+    expect(closeCount, 1);
+    expect(find.textContaining('K / Esc close'), findsOneWidget);
+  });
+
   testWidgets('block semantics expose its label and activation action', (
     tester,
   ) async {
@@ -158,37 +181,25 @@ void main() {
     expect(data.hasAction(SemanticsAction.tap), isTrue);
     semantics.dispose();
   });
+}
 
-  testWidgets('E opens the inventory and ModalInputRegion owns input', (
-    tester,
-  ) async {
-    _setViewport(tester, width: 800, height: 700);
-    final controller = BuilderStudioController();
-    addTearDown(controller.dispose);
-    final ownership = <bool>[];
-
-    await tester.pumpWidget(
-      _app(
-        BuilderStudioShortcutHost(
-          controller: controller,
-          onInputCaptureChanged: ownership.add,
-          child: const ColoredBox(color: Colors.black),
-        ),
-      ),
-    );
+Future<void> _focusWithTab(WidgetTester tester, Finder target) async {
+  for (var attempt = 0; attempt < 50; attempt++) {
+    await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
-    await tester.pumpAndSettle();
-
-    expect(find.text('Block inventory'), findsOneWidget);
-    expect(find.byKey(BuilderStudioKeys.medium), findsOneWidget);
-    expect(ownership, contains(true));
-
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.text('Block inventory'), findsNothing);
-    expect(ownership.last, isFalse);
-  });
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) continue;
+    final focused = find.byElementPredicate(
+      (element) => identical(element, focusContext),
+    );
+    if (find.ancestor(of: focused, matching: target).evaluate().isNotEmpty) {
+      return;
+    }
+  }
+  fail(
+    'Could not focus ${target.describeMatch(Plurality.one)} '
+    'with keyboard traversal',
+  );
 }
 
 Widget _app(Widget child) => MaterialApp(

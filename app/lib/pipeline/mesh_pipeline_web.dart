@@ -34,7 +34,7 @@ class MeshPipeline implements MeshPipelineBase {
   static const int _priorityScale = 256;
   static const int _maximumPriorityCoordinate = 94906249;
 
-  final MeshRequestQueue _queue = MeshRequestQueue();
+  final MeshRequestQueue _queue = MeshRequestQueue(maxRetries: 1);
   final Map<int, MeshJob> _jobs = <int, MeshJob>{};
   final StreamController<ChunkMeshData> _results =
       StreamController<ChunkMeshData>.broadcast();
@@ -69,6 +69,12 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   Future<void> start() async {}
+
+  @override
+  void pauseDeadlines() {}
+
+  @override
+  void resumeDeadlines() {}
 
   @override
   void request(MeshJob job) {
@@ -136,10 +142,21 @@ class MeshPipeline implements MeshPipelineBase {
     ChunkMeshData data;
     try {
       data = _meshChunk(job.snapshot);
-    } on Object {
+    } on Object catch (error, stackTrace) {
       final outcome = _queue.fail(request);
       if (outcome == MeshFailureOutcome.retryLimitReached) {
         _forgetJob(request.chunkIndex, request.generation);
+        if (!_disposed && !_results.isClosed) {
+          _results.addError(
+            MeshPipelineFailure(
+              chunkIndex: request.chunkIndex,
+              generation: request.generation,
+              kind: MeshPipelineFailureKind.meshing,
+              cause: error,
+            ),
+            stackTrace,
+          );
+        }
       }
       return;
     }
@@ -167,7 +184,13 @@ class MeshPipeline implements MeshPipelineBase {
     _jobs.clear();
     onMainThreadMeshTime = null;
     _sliceStopwatch.stop();
-    _results.close();
+    unawaited(_results.close());
+  }
+
+  @override
+  Future<void> close() {
+    dispose();
+    return Future<void>.value();
   }
 
   static int _priorityCoordinate(double priority) {

@@ -6,6 +6,8 @@ import 'controls_hint.dart';
 import 'modal_input_region.dart';
 import 'showcase_panel.dart';
 
+part 'pause_options_sections.dart';
+
 enum PauseOptionsSection {
   pause('Pause', Icons.pause_circle_outline),
   controls('Controls', Icons.keyboard_alt_outlined),
@@ -141,40 +143,35 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
       focusNode: _keyboardFocus,
       autofocus: true,
       onKeyEvent: _onKeyEvent,
-      child: AnimatedBuilder(
-        animation: widget.controller,
-        builder: (context, _) => LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxWidth < 700;
-            return Stack(
-              fit: StackFit.expand,
-              children: <Widget>[
-                const ColoredBox(
-                  key: PauseOptionsKeys.dimmer,
-                  color: Color(0xAA000000),
-                ),
-                SafeArea(
-                  minimum: const EdgeInsets.all(12),
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: BoxConstraints(
-                        maxWidth: compact ? 520 : 900,
-                        maxHeight: constraints.maxHeight,
-                      ),
-                      child: _BlockPanel(
-                        key: PauseOptionsKeys.panel,
-                        highContrast:
-                            widget.controller.highContrast ||
-                            MediaQuery.highContrastOf(context),
-                        child: compact ? _compact(context) : _expanded(context),
-                      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 700;
+          return Stack(
+            fit: StackFit.expand,
+            children: <Widget>[
+              const ColoredBox(
+                key: PauseOptionsKeys.dimmer,
+                color: Color(0xAA000000),
+              ),
+              SafeArea(
+                minimum: const EdgeInsets.all(12),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxWidth: compact ? 520 : 900,
+                      maxHeight: constraints.maxHeight,
+                    ),
+                    child: _BlockPanel(
+                      key: PauseOptionsKeys.panel,
+                      controller: widget.controller,
+                      child: compact ? _compact(context) : _expanded(context),
                     ),
                   ),
                 ),
-              ],
-            );
-          },
-        ),
+              ),
+            ],
+          );
+        },
       ),
     ),
   );
@@ -185,7 +182,7 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
       _header(context),
       _horizontalNavigation(context),
       const _BlockDivider(),
-      Expanded(child: _sectionBody(context, compact: true)),
+      Expanded(child: _sectionBody(compact: true)),
     ],
   );
 
@@ -200,7 +197,7 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
           children: <Widget>[
             SizedBox(width: 184, child: _verticalNavigation(context)),
             const _BlockDivider(vertical: true),
-            Expanded(child: _sectionBody(context, compact: false)),
+            Expanded(child: _sectionBody(compact: false)),
           ],
         ),
       ),
@@ -278,424 +275,14 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
     ],
   );
 
-  Widget _sectionBody(BuildContext context, {required bool compact}) =>
-      switch (_section) {
-        PauseOptionsSection.pause => _pauseMenu(context, compact: compact),
-        PauseOptionsSection.controls => _controls(context),
-        PauseOptionsSection.graphics => _graphics(context),
-        PauseOptionsSection.audio => _audio(context),
-        PauseOptionsSection.accessibility => _accessibility(context),
-      };
-
-  Widget _pauseMenu(BuildContext context, {required bool compact}) => ListView(
-    padding: EdgeInsets.all(compact ? 14 : 20),
-    children: <Widget>[
-      ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: <Widget>[
-            _BlockButton(
-              key: PauseOptionsKeys.resume,
-              onPressed: widget.callbacks.onResume,
-              icon: Icons.play_arrow,
-              label: 'Resume game',
-              primary: true,
-            ),
-            const SizedBox(height: 9),
-            _BlockButton(
-              key: PauseOptionsKeys.worldLibrary,
-              onPressed: widget.callbacks.onOpenWorldLibrary,
-              icon: Icons.public,
-              label: 'World Library',
-            ),
-            const SizedBox(height: 9),
-            _BlockButton(
-              key: PauseOptionsKeys.renderLab,
-              onPressed: widget.callbacks.onOpenRenderLab,
-              icon: Icons.science_outlined,
-              label: 'Render Lab',
-            ),
-            const SizedBox(height: 14),
-            const ControlsHint(),
-            const SizedBox(height: 18),
-            _BlockButton(
-              key: PauseOptionsKeys.saveAndQuit,
-              onPressed: widget.callbacks.onSaveAndQuit,
-              icon: Icons.save_outlined,
-              label: 'Save and quit',
-              destructive: true,
-            ),
-          ],
-        ),
-      ),
-    ],
+  Widget _sectionBody({required bool compact}) => AnimatedBuilder(
+    animation: widget.controller,
+    builder: (context, _) => _PauseSectionContent(
+      section: _section,
+      compact: compact,
+      controller: widget.controller,
+      callbacks: widget.callbacks,
+      onStartRebinding: _startRebinding,
+    ),
   );
-
-  Widget _controls(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: <Widget>[
-      ShowcasePanel(
-        title: 'Mouse',
-        child: Column(
-          children: <Widget>[
-            LabeledSlider(
-              key: PauseOptionsKeys.mouseSensitivity,
-              label: 'Mouse sensitivity',
-              valueLabel:
-                  '${(widget.controller.mouseSensitivity * 100).round()}%',
-              value: widget.controller.mouseSensitivity,
-              min: 0.05,
-              max: 1,
-              divisions: 19,
-              onChanged: widget.controller.setMouseSensitivity,
-            ),
-            SwitchListTile(
-              key: PauseOptionsKeys.invertMouse,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Invert vertical look'),
-              subtitle: const Text('Mouse up looks down'),
-              value: widget.controller.invertMouseY,
-              onChanged: widget.controller.setInvertMouseY,
-            ),
-          ],
-        ),
-      ),
-      const SizedBox(height: 12),
-      ShowcasePanel(
-        title: 'Key bindings',
-        subtitle: 'Choose an action, then press a key. Conflicts swap keys.',
-        trailing: TextButton(
-          onPressed: widget.controller.resetBindings,
-          child: const Text('Reset'),
-        ),
-        child: Column(
-          children: <Widget>[
-            if (widget.controller.rebindingAction != null)
-              Semantics(
-                liveRegion: true,
-                label:
-                    'Waiting for a key for ${widget.controller.rebindingAction!.label}',
-                child: Card(
-                  color: Theme.of(context).colorScheme.tertiaryContainer,
-                  child: const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Row(
-                      children: <Widget>[
-                        Icon(Icons.keyboard),
-                        SizedBox(width: 8),
-                        Expanded(child: Text('Press a key · Escape cancels')),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            for (final action in GameInputAction.values)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(action.label),
-                trailing: OutlinedButton(
-                  key: PauseOptionsKeys.binding(action),
-                  onPressed: () => _startRebinding(action),
-                  child: Text(
-                    widget.controller.rebindingAction == action
-                        ? 'Press a key…'
-                        : widget.controller.bindingLabel(action),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  Widget _graphics(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: <Widget>[
-      ShowcasePanel(
-        title: 'Fog distance',
-        subtitle: 'F cycles the same presets in game.',
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: <Widget>[
-            for (final preset in FogPreset.values)
-              ChoiceChip(
-                key: PauseOptionsKeys.fog(preset),
-                label: Text(preset.label),
-                selected: widget.controller.fogPreset == preset,
-                onSelected: (_) => widget.controller.setFogPreset(preset),
-              ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  Widget _audio(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: <Widget>[
-      ShowcasePanel(
-        title: 'Audio',
-        child: Column(
-          children: <Widget>[
-            SwitchListTile(
-              key: PauseOptionsKeys.audioMuted,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Mute audio'),
-              value: widget.controller.audioMuted,
-              onChanged: widget.controller.setAudioMuted,
-            ),
-            LabeledSlider(
-              label: 'Master volume',
-              valueLabel: _percent(widget.controller.masterVolume),
-              value: widget.controller.masterVolume,
-              min: 0,
-              max: 1,
-              divisions: 20,
-              onChanged: widget.controller.setMasterVolume,
-            ),
-            LabeledSlider(
-              label: 'Block effects',
-              valueLabel: _percent(widget.controller.effectsVolume),
-              value: widget.controller.effectsVolume,
-              min: 0,
-              max: 1,
-              divisions: 20,
-              onChanged: widget.controller.setEffectsVolume,
-            ),
-            LabeledSlider(
-              label: 'Ambience',
-              valueLabel: _percent(widget.controller.ambienceVolume),
-              value: widget.controller.ambienceVolume,
-              min: 0,
-              max: 1,
-              divisions: 20,
-              onChanged: widget.controller.setAmbienceVolume,
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  Widget _accessibility(BuildContext context) => ListView(
-    padding: const EdgeInsets.all(16),
-    children: <Widget>[
-      ShowcasePanel(
-        title: 'Accessibility',
-        child: Column(
-          children: <Widget>[
-            SwitchListTile(
-              key: PauseOptionsKeys.highContrast,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('High contrast'),
-              subtitle: const Text('Stronger outlines and UI separation'),
-              value: widget.controller.highContrast,
-              onChanged: widget.controller.setHighContrast,
-            ),
-            SwitchListTile(
-              key: PauseOptionsKeys.reducedMotion,
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Reduced motion'),
-              subtitle: const Text('Minimize camera and UI movement'),
-              value: widget.controller.reducedMotion,
-              onChanged: widget.controller.setReducedMotion,
-            ),
-          ],
-        ),
-      ),
-    ],
-  );
-
-  static String _percent(double value) => '${(value * 100).round()}%';
-}
-
-final class _BlockPanel extends StatelessWidget {
-  const _BlockPanel({
-    required this.child,
-    required this.highContrast,
-    super.key,
-  });
-
-  final Widget child;
-  final bool highContrast;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final edge = highContrast ? 3.0 : 2.0;
-    return Material(
-      color: colors.surfaceContainer,
-      elevation: 18,
-      shadowColor: Colors.black,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: colors.surfaceBright, width: edge),
-            left: BorderSide(color: colors.surfaceBright, width: edge),
-            right: BorderSide(color: colors.surfaceDim, width: edge),
-            bottom: BorderSide(color: colors.surfaceDim, width: edge),
-          ),
-        ),
-        child: child,
-      ),
-    );
-  }
-}
-
-final class _BlockDivider extends StatelessWidget {
-  const _BlockDivider({this.vertical = false});
-
-  final bool vertical;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = Theme.of(context).colorScheme.outlineVariant;
-    return vertical
-        ? VerticalDivider(width: 1, thickness: 1, color: color)
-        : Divider(height: 1, thickness: 1, color: color);
-  }
-}
-
-final class _SectionButton extends StatelessWidget {
-  const _SectionButton({
-    required this.section,
-    required this.selected,
-    required this.onPressed,
-    this.compact = false,
-    super.key,
-  });
-
-  final PauseOptionsSection section;
-  final bool selected;
-  final VoidCallback onPressed;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) => _BlockButton(
-    onPressed: onPressed,
-    icon: section.icon,
-    label: section.label,
-    selected: selected,
-    compact: compact,
-  );
-}
-
-final class _BlockButton extends StatelessWidget {
-  const _BlockButton({
-    required this.onPressed,
-    required this.icon,
-    required this.label,
-    this.primary = false,
-    this.destructive = false,
-    this.selected = false,
-    this.compact = false,
-    super.key,
-  });
-
-  final VoidCallback onPressed;
-  final IconData icon;
-  final String label;
-  final bool primary;
-  final bool destructive;
-  final bool selected;
-  final bool compact;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    final highContrast = MediaQuery.highContrastOf(context);
-    final active = primary || selected;
-    final background = destructive
-        ? colors.errorContainer
-        : active
-        ? colors.primaryContainer
-        : colors.surfaceContainerHighest;
-    final foreground = destructive
-        ? colors.onErrorContainer
-        : active
-        ? colors.onPrimaryContainer
-        : colors.onSurface;
-    final edge = highContrast ? 2.0 : 1.0;
-
-    return Semantics(
-      label: label,
-      selected: selected,
-      button: true,
-      onTap: onPressed,
-      excludeSemantics: true,
-      child: FocusableActionDetector(
-        child: Builder(
-          builder: (context) => InkWell(
-            onTap: onPressed,
-            focusColor: Colors.transparent,
-            hoverColor: colors.primary.withValues(alpha: 0.12),
-            child: AnimatedContainer(
-              duration: MediaQuery.disableAnimationsOf(context)
-                  ? Duration.zero
-                  : const Duration(milliseconds: 90),
-              curve: Curves.easeOut,
-              constraints: BoxConstraints(minHeight: compact ? 36 : 44),
-              padding: EdgeInsets.symmetric(
-                horizontal: compact ? 10 : 14,
-                vertical: compact ? 6 : 9,
-              ),
-              decoration: BoxDecoration(
-                color: background,
-                border: Border(
-                  top: BorderSide(color: colors.surfaceBright, width: edge),
-                  left: BorderSide(color: colors.surfaceBright, width: edge),
-                  right: BorderSide(color: colors.surfaceDim, width: edge),
-                  bottom: BorderSide(color: colors.surfaceDim, width: edge),
-                ),
-                boxShadow: <BoxShadow>[
-                  BoxShadow(
-                    color: colors.shadow.withValues(alpha: 0.45),
-                    offset: const Offset(2, 2),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: <Widget>[
-                  Icon(icon, size: compact ? 17 : 19, color: foreground),
-                  const SizedBox(width: 8),
-                  if (compact)
-                    Text(
-                      label.toUpperCase(),
-                      style: blockMonoStyle(
-                        context,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.75,
-                        color: foreground,
-                      ),
-                    )
-                  else
-                    Expanded(
-                      child: Text(
-                        label.toUpperCase(),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: blockMonoStyle(
-                          context,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          letterSpacing: 0.75,
-                          color: foreground,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

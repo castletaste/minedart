@@ -24,18 +24,25 @@ Keep this list sorted. It is the machine-readable source of truth used by
 - `example/analysis_options.yaml`
 - `example/pubspec.yaml`
 - `lib/graphics.dart`
+- `lib/src/camera/camera_component_3d.dart`
+- `lib/src/camera/world_3d.dart`
+- `lib/src/components/object_3d.dart`
 - `lib/src/graphics/backend/flutter_gpu/gpu_backend.dart`
 - `lib/src/graphics/backend/gpu_backend.dart`
 - `lib/src/graphics/backend/gpu_bind_cache_counters.dart`
 - `lib/src/graphics/backend/web_gpu/cache_policy.dart`
 - `lib/src/graphics/backend/web_gpu/gpu_backend.dart`
 - `lib/src/graphics/graphics_device.dart`
+- `lib/src/graphics/render_context_3d.dart`
 - `lib/src/resources/shader/shader.dart`
 - `pubspec.yaml`
+- `test/camera/camera_component_3d_test.dart`
+- `test/components/object_3d_test.dart`
 - `test/graphics/backend/web_gpu/cache_policy_chrome_test.dart`
 - `test/graphics/backend/web_gpu/cache_policy_define_off_chrome_test.dart`
 - `test/graphics/backend/web_gpu/cache_policy_test_suite.dart`
 - `test/graphics/backend/web_gpu/cache_policy_vm_test.dart`
+- `test/graphics/render_context_3d_test.dart`
 - `test/provenance/upstream_drift_test.dart`
 - `test/resources/shader/shader_binding_revision_test.dart`
 <!-- END INTENTIONAL CHANGE ALLOWLIST -->
@@ -47,6 +54,8 @@ Keep this list sorted. It is the machine-readable source of truth used by
 - Generic shader/device/backend files carry stable uniform identity and
   monotonic byte-content revision metadata. The native FlutterGPU backend only
   accepts and ignores those optional parameters.
+- Camera/component/render-context files cache one frustum per render traversal
+  and restore deferred-draw and culling state after component exceptions.
 - The WebGPU backend adds a persistent sorted slot plan, sampled-texture view
   lifetime, and group-1-only frame-local uniform/bind-group reuse. Swapchain and
   depth views stay on their direct per-pass path.
@@ -58,7 +67,7 @@ Keep this list sorted. It is the machine-readable source of truth used by
 
 ## Verification routes
 
-From this directory with Flutter 3.44.4:
+From this directory with Flutter 3.44.9:
 
 ```sh
 flutter pub get

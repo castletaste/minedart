@@ -39,6 +39,11 @@ final class RepositoryAutosaver {
     if (metadata.id != _metadata.id) {
       throw ArgumentError.value(metadata.id, 'metadata.id', _metadata.id);
     }
+    if (_timer != null || _lifecycle != null || _saveTask != null) {
+      throw StateError(
+        'Stop and drain autosave before replacing durable metadata',
+      );
+    }
     _metadata = metadata;
   }
 
@@ -92,7 +97,8 @@ final class RepositoryAutosaver {
     _lifecycle = null;
   }
 
-  /// Stops future saves and waits for an already-running atomic write.
+  /// Stops background saves and waits for an already-running atomic write.
+  /// Explicit [saveNow] remains available for an owner-controlled final save.
   Future<void> stopAndWait() async {
     stop();
     final task = _saveTask;

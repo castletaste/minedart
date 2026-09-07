@@ -7,6 +7,8 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../controller/options_controller.dart';
+
 /// One legend row: the printed key cap, the action it performs, and the
 /// spoken form used to build the accessible summary.
 @immutable
@@ -61,13 +63,21 @@ TextStyle blockMonoStyle(
 
 /// Reusable legend of the default control scheme.
 final class ControlsHint extends StatelessWidget {
-  const ControlsHint({this.title = 'Controls', this.maxColumns = 3, super.key});
+  const ControlsHint({
+    this.title = 'Controls',
+    this.maxColumns = 3,
+    this.controller,
+    super.key,
+  });
 
   /// Optional caption above the legend. Pass `null` to hide it.
   final String? title;
 
   /// Upper bound on legend columns; the real count follows parent constraints.
   final int maxColumns;
+
+  /// When supplied, the legend follows the user's current key bindings.
+  final OptionsController? controller;
 
   static const List<ControlsHintEntry> entries = <ControlsHintEntry>[
     ControlsHintEntry(keys: 'WASD', action: 'Move', spokenKeys: 'W A S D'),
@@ -97,6 +107,10 @@ final class ControlsHint extends StatelessWidget {
 
   /// Single spoken summary for the whole legend.
   static String get semanticsSummary {
+    return _semanticsSummary(entries);
+  }
+
+  static String _semanticsSummary(List<ControlsHintEntry> entries) {
     final parts = entries.map(
       (entry) => '${entry.spokenKeys} ${entry.action.toLowerCase()}',
     );
@@ -104,21 +118,38 @@ final class ControlsHint extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => Semantics(
+  Widget build(BuildContext context) {
+    final options = controller;
+    if (options == null) return _buildLegend(context, entries);
+    return AnimatedBuilder(
+      animation: options,
+      builder: (context, _) => _buildLegend(context, _entriesFor(options)),
+    );
+  }
+
+  Widget _buildLegend(
+    BuildContext context,
+    List<ControlsHintEntry> visibleEntries,
+  ) => Semantics(
     key: ControlsHintKeys.root,
     container: true,
     excludeSemantics: true,
-    label: semanticsSummary,
+    label: _semanticsSummary(visibleEntries),
     child: ExcludeFocus(
       child: IgnorePointer(
         child: LayoutBuilder(
-          builder: (context, constraints) => _legend(context, constraints),
+          builder: (context, constraints) =>
+              _legend(context, constraints, visibleEntries),
         ),
       ),
     ),
   );
 
-  Widget _legend(BuildContext context, BoxConstraints constraints) {
+  Widget _legend(
+    BuildContext context,
+    BoxConstraints constraints,
+    List<ControlsHintEntry> visibleEntries,
+  ) {
     final colors = Theme.of(context).colorScheme;
     final highContrast = MediaQuery.highContrastOf(context);
     final width = constraints.maxWidth;
@@ -149,7 +180,7 @@ final class ControlsHint extends StatelessWidget {
           spacing: spacing,
           runSpacing: 6,
           children: <Widget>[
-            for (final entry in entries)
+            for (final entry in visibleEntries)
               SizedBox(
                 width: itemWidth,
                 child: _ControlsHintRow(
@@ -171,6 +202,60 @@ final class ControlsHint extends StatelessWidget {
         ? 2
         : 1;
     return fits.clamp(1, maxColumns.clamp(1, 3)).toInt();
+  }
+
+  static List<ControlsHintEntry> _entriesFor(OptionsController options) {
+    String label(GameInputAction action) => options.bindingLabel(action);
+    final movement = <String>[
+      label(GameInputAction.moveForward),
+      label(GameInputAction.strafeLeft),
+      label(GameInputAction.moveBackward),
+      label(GameInputAction.strafeRight),
+    ];
+    final forward = label(GameInputAction.moveForward);
+    return <ControlsHintEntry>[
+      ControlsHintEntry(
+        keys: movement.every((key) => key.length == 1)
+            ? movement.join()
+            : movement.join(' / '),
+        action: 'Move',
+        spokenKeys: movement.join(' '),
+      ),
+      ControlsHintEntry(
+        keys: '$forward $forward',
+        action: 'Sprint',
+        spokenKeys: 'Double tap $forward',
+      ),
+      ControlsHintEntry(
+        keys: label(GameInputAction.jump),
+        action: 'Jump',
+        spokenKeys: label(GameInputAction.jump),
+      ),
+      ControlsHintEntry(
+        keys: label(GameInputAction.toggleNoclip),
+        action: 'Noclip',
+        spokenKeys: label(GameInputAction.toggleNoclip),
+      ),
+      entries[4],
+      entries[5],
+      ControlsHintEntry(
+        keys: label(GameInputAction.openInventory),
+        action: 'Inventory',
+        spokenKeys: label(GameInputAction.openInventory),
+      ),
+      entries[7],
+      ControlsHintEntry(
+        keys: label(GameInputAction.cycleFog),
+        action: 'Fog',
+        spokenKeys: label(GameInputAction.cycleFog),
+      ),
+      ControlsHintEntry(
+        keys: label(GameInputAction.debugOverlay),
+        action: 'Debug',
+        spokenKeys: label(GameInputAction.debugOverlay),
+      ),
+      entries[10],
+    ];
   }
 }
 

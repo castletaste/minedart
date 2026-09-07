@@ -19,21 +19,6 @@ final class WorldLibraryEntry {
   final DateTime updatedAt;
   final int formatVersion;
   final bool isCurrent;
-
-  WorldLibraryEntry copyWith({
-    String? name,
-    int? seed,
-    DateTime? updatedAt,
-    int? formatVersion,
-    bool? isCurrent,
-  }) => WorldLibraryEntry(
-    id: id,
-    name: name ?? this.name,
-    seed: seed ?? this.seed,
-    updatedAt: updatedAt ?? this.updatedAt,
-    formatVersion: formatVersion ?? this.formatVersion,
-    isCurrent: isCurrent ?? this.isCurrent,
-  );
 }
 
 enum WorldLibraryAction {
@@ -111,6 +96,7 @@ final class WorldLibraryController extends ChangeNotifier {
   String _query = '';
   String? _busyWorldId;
   String? _errorMessage;
+  bool _disposed = false;
 
   UnmodifiableListView<WorldLibraryEntry> get worlds =>
       UnmodifiableListView<WorldLibraryEntry>(_worlds);
@@ -132,36 +118,47 @@ final class WorldLibraryController extends ChangeNotifier {
   }
 
   void replaceWorlds(Iterable<WorldLibraryEntry> worlds) {
+    if (_disposed) return;
     _worlds
       ..clear()
       ..addAll(worlds);
-    notifyListeners();
+    _notifyListeners();
   }
 
   void setQuery(String value) {
-    if (_query == value) return;
+    if (_disposed || _query == value) return;
     _query = value;
-    notifyListeners();
+    _notifyListeners();
   }
 
   void clearError() {
-    if (_errorMessage == null) return;
+    if (_disposed || _errorMessage == null) return;
     _errorMessage = null;
-    notifyListeners();
+    _notifyListeners();
   }
 
   Future<void> run(String worldId, Future<void> Function() operation) async {
-    if (_busyWorldId != null) return;
+    if (_disposed || _busyWorldId != null) return;
     _busyWorldId = worldId;
     _errorMessage = null;
-    notifyListeners();
+    _notifyListeners();
     try {
       await operation();
     } on Object catch (error) {
       _errorMessage = error.toString();
     } finally {
       _busyWorldId = null;
-      notifyListeners();
+      _notifyListeners();
     }
+  }
+
+  void _notifyListeners() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

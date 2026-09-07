@@ -10,5 +10,6 @@ final class BrowserPointerLock {
 
   Future<void> capture() async {}
   void release() {}
+  Future<void> releaseAndWait() async {}
   void dispose() {}
 }

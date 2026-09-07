@@ -21,6 +21,7 @@ class StoredWorldRepository implements WorldRepository {
 
   final WorldByteStore store;
   final DateTime Function() _clock;
+  Future<void> _mutationTail = Future<void>.value();
 
   @override
   Future<List<WorldSummary>> list() async {
@@ -49,16 +50,123 @@ class StoredWorldRepository implements WorldRepository {
   @override
   Future<WorldDocument> create(WorldDocument document) async {
     _checkId(document.metadata.id);
-    if (await store.read(document.metadata.id) != null) {
-      throw StateError('World already exists: ${document.metadata.id}');
-    }
-    await save(document);
-    return document;
+    return _mutate(() async {
+      if (await store.read(document.metadata.id) != null) {
+        throw StateError('World already exists: ${document.metadata.id}');
+      }
+      await _write(document);
+      return document;
+    });
   }
 
   @override
   Future<WorldDocument?> load(String id) async {
     _checkId(id);
+    return _load(id);
+  }
+
+  @override
+  Future<void> save(WorldDocument document) async {
+    _checkId(document.metadata.id);
+    await _mutate(() => _write(document));
+  }
+
+  @override
+  Future<WorldSummary?> rename(String id, String name) async {
+    _checkId(id);
+    final normalized = name.trim();
+    if (normalized.isEmpty) {
+      throw ArgumentError.value(name, 'name', 'must not be empty');
+    }
+    return _mutate(() async {
+      final source = await _load(id);
+      if (source == null) return null;
+      final renamed = source.copyWith(
+        metadata: source.metadata.copyWith(
+          name: normalized,
+          updatedAt: _clock(),
+        ),
+      );
+      await _write(renamed);
+      return WorldSummary(renamed.metadata);
+    });
+  }
+
+  @override
+  Future<WorldDocument?> duplicate(String id, WorldMetadata metadata) async {
+    _checkId(id);
+    _checkId(metadata.id);
+    return _mutate(() async {
+      final source = await _load(id);
+      if (source == null) return null;
+      if (metadata.id == id || await store.read(metadata.id) != null) {
+        throw StateError('Duplicate world id already exists: ${metadata.id}');
+      }
+      final duplicate = source.copyWith(
+        metadata: metadata.copyWith(
+          seed: source.metadata.seed,
+          formatVersion: 2,
+        ),
+      );
+      await _write(duplicate);
+      return duplicate;
+    });
+  }
+
+  @override
+  Future<bool> delete(String id) async {
+    _checkId(id);
+    return _mutate(() async {
+      if (await store.read(id) == null) return false;
+      return store.remove(id);
+    });
+  }
+
+  @override
+  Future<WorldDocument> importBytes(
+    Uint8List bytes, {
+    WorldMetadata? legacyMetadata,
+  }) async {
+    final decoded = await MdrtCodec.decode(
+      bytes,
+      legacyMetadata: legacyMetadata,
+    );
+    _checkId(decoded.metadata.id);
+    return _mutate(() async {
+      var document = decoded;
+      if (await store.read(document.metadata.id) != null) {
+        final base = document.metadata.id.length > 40
+            ? document.metadata.id.substring(0, 40)
+            : document.metadata.id;
+        final now = _clock();
+        final suffix = now.microsecondsSinceEpoch.toRadixString(36);
+        var candidate = '$base-copy-$suffix';
+        var attempt = 2;
+        while (await store.read(candidate) != null) {
+          candidate = '$base-copy-$suffix-${attempt++}';
+        }
+        document = document.copyWith(
+          metadata: document.metadata.copyWith(
+            id: candidate,
+            createdAt: now,
+            updatedAt: now,
+          ),
+        );
+      }
+      await _write(document);
+      return document;
+    });
+  }
+
+  @override
+  Future<Uint8List> exportBytes(String id) async {
+    _checkId(id);
+    final document = await load(id);
+    if (document == null) throw WorldNotFoundException(id);
+    return MdrtCodec.encode(document);
+  }
+
+  Future<WorldDocument?> _load(String id) async {
     final bytes = await store.read(id);
     if (bytes == null) return null;
     final document = await MdrtCodec.decode(bytes);
@@ -70,89 +178,18 @@ class StoredWorldRepository implements WorldRepository {
     return document;
   }
 
-  @override
-  Future<void> save(WorldDocument document) async {
-    _checkId(document.metadata.id);
+  Future<void> _write(WorldDocument document) async {
     await store.write(document.metadata.id, await MdrtCodec.encode(document));
   }
 
-  @override
-  Future<WorldSummary?> rename(String id, String name) async {
-    _checkId(id);
-    final normalized = name.trim();
-    if (normalized.isEmpty) {
-      throw ArgumentError.value(name, 'name', 'must not be empty');
-    }
-    final source = await load(id);
-    if (source == null) return null;
-    final renamed = source.copyWith(
-      metadata: source.metadata.copyWith(name: normalized, updatedAt: _clock()),
-    );
-    await save(renamed);
-    return WorldSummary(renamed.metadata);
-  }
-
-  @override
-  Future<WorldDocument?> duplicate(String id, WorldMetadata metadata) async {
-    _checkId(id);
-    _checkId(metadata.id);
-    final source = await load(id);
-    if (source == null) return null;
-    if (metadata.id == id || await store.read(metadata.id) != null) {
-      throw StateError('Duplicate world id already exists: ${metadata.id}');
-    }
-    final duplicate = source.copyWith(
-      metadata: metadata.copyWith(seed: source.metadata.seed, formatVersion: 2),
-    );
-    await save(duplicate);
-    return duplicate;
-  }
-
-  @override
-  Future<bool> delete(String id) async {
-    _checkId(id);
-    if (await store.read(id) == null) return false;
-    return store.remove(id);
-  }
-
-  @override
-  Future<WorldDocument> importBytes(
-    Uint8List bytes, {
-    WorldMetadata? legacyMetadata,
-  }) async {
-    var document = await MdrtCodec.decode(
-      bytes,
-      legacyMetadata: legacyMetadata,
-    );
-    _checkId(document.metadata.id);
-    if (await store.read(document.metadata.id) != null) {
-      final base = document.metadata.id.length > 40
-          ? document.metadata.id.substring(0, 40)
-          : document.metadata.id;
-      var suffix = _clock().microsecondsSinceEpoch.toRadixString(36);
-      var candidate = '$base-copy-$suffix';
-      var attempt = 2;
-      while (await store.read(candidate) != null) {
-        candidate = '$base-copy-$suffix-${attempt++}';
-      }
-      document = document.copyWith(
-        metadata: document.metadata.copyWith(
-          id: candidate,
-          createdAt: _clock(),
-          updatedAt: _clock(),
-        ),
-      );
-    }
-    await save(document);
-    return document;
-  }
-
-  @override
-  Future<Uint8List> exportBytes(String id) async {
-    _checkId(id);
-    final document = await load(id);
-    if (document == null) throw WorldNotFoundException(id);
-    return MdrtCodec.encode(document);
+  Future<T> _mutate<T>(Future<T> Function() operation) {
+    final predecessor = _mutationTail;
+    final result = () async {
+      await predecessor;
+      return operation();
+    }();
+    _mutationTail = result.then<void>((_) {}, onError: (_, _) {});
+    return result;
   }
 }
 

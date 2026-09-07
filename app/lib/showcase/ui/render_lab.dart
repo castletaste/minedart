@@ -5,7 +5,6 @@ import 'showcase_panel.dart';
 
 abstract final class RenderLabKeys {
   static const debugView = ValueKey<String>('render-lab-debug-view');
-  static const filtering = ValueKey<String>('render-lab-filtering');
   static const renderDistance = ValueKey<String>('render-lab-distance');
   static const fogDensity = ValueKey<String>('render-lab-fog-density');
   static const ambientOcclusion = ValueKey<String>('render-lab-ao');
@@ -57,18 +56,6 @@ final class RenderLabPanel extends StatelessWidget {
                   onChanged: (value) {
                     if (value != null) controller.setDebugView(value);
                   },
-                ),
-                const SizedBox(height: 12),
-                InputDecorator(
-                  key: RenderLabKeys.filtering,
-                  decoration: const InputDecoration(
-                    labelText: 'Texture filtering',
-                    helperText:
-                        'Nearest is fixed by the current flame_3d backend.',
-                    prefixIcon: Icon(Icons.grid_on_outlined),
-                    border: OutlineInputBorder(),
-                  ),
-                  child: const Text('Nearest · backend capability'),
                 ),
                 const SizedBox(height: 12),
                 LabeledSlider(

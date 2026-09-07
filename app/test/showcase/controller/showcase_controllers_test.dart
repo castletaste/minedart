@@ -101,6 +101,10 @@ void main() {
         controller.bindingFor(GameInputAction.toggleNoclip),
         LogicalKeyboardKey.keyN,
       );
+      expect(
+        controller.gameBindings[GameInputAction.openInventory],
+        LogicalKeyboardKey.keyE,
+      );
     });
 
     test('swaps conflicting bindings and updates settings', () {
@@ -133,6 +137,24 @@ void main() {
       expect(controller.audioMuted, isTrue);
       expect(controller.highContrast, isTrue);
       expect(controller.reducedMotion, isTrue);
+    });
+
+    test('game bindings are snapshots of the canonical controls', () {
+      final controller = OptionsController();
+      addTearDown(controller.dispose);
+      final beforeRebind = controller.gameBindings;
+
+      controller.beginRebinding(GameInputAction.openInventory);
+      controller.captureKey(LogicalKeyboardKey.keyK);
+
+      expect(
+        beforeRebind[GameInputAction.openInventory],
+        LogicalKeyboardKey.keyE,
+      );
+      expect(
+        controller.gameBindings[GameInputAction.openInventory],
+        LogicalKeyboardKey.keyK,
+      );
     });
   });
 
@@ -175,6 +197,18 @@ void main() {
       await controller.run('world', () async => throw StateError('broken'));
       expect(controller.errorMessage, contains('broken'));
     });
+
+    test('an in-flight operation may complete after dispose', () async {
+      final controller = WorldLibraryController();
+      final gate = Completer<void>();
+
+      final operation = controller.run('world', () => gate.future);
+      controller.dispose();
+      gate.complete();
+
+      await expectLater(operation, completes);
+      expect(controller.busyWorldId, isNull);
+    });
   });
 
   group('typed Render Lab controller', () {
@@ -193,6 +227,20 @@ void main() {
       expect(controller.settings.debugView, RenderDebugView.normals);
       expect(controller.settings.renderDistance, 16);
       expect(controller.settings.fogDensity, 0);
+    });
+
+    test('does not notify when a setting is unchanged', () {
+      var notifications = 0;
+      final controller = RenderLabController()
+        ..addListener(() => notifications++);
+      addTearDown(controller.dispose);
+
+      controller
+        ..setDebugView(RenderDebugView.lit)
+        ..setRenderDistance(6)
+        ..reset();
+
+      expect(notifications, 0);
     });
   });
 }

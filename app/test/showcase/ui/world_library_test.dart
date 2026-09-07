@@ -260,7 +260,62 @@ void main() {
     expect(find.byType(SegmentedButton<WorldLibraryPreset>), findsOneWidget);
     expect(find.byType(RadioGroup<WorldLibraryPreset>), findsNothing);
   });
+
+  testWidgets('search field follows a replacement controller', (tester) async {
+    _setViewport(tester, width: 800);
+    final first = WorldLibraryController()..setQuery('first');
+    final second = WorldLibraryController()..setQuery('second');
+    final selected = ValueNotifier<WorldLibraryController>(first);
+    addTearDown(first.dispose);
+    addTearDown(second.dispose);
+    addTearDown(selected.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ValueListenableBuilder<WorldLibraryController>(
+          valueListenable: selected,
+          builder: (context, controller, _) {
+            return WorldLibraryView(
+              controller: controller,
+              callbacks: _emptyCallbacks,
+              onClose: () {},
+            );
+          },
+        ),
+      ),
+    );
+    expect(
+      tester
+          .widget<TextField>(find.byKey(WorldLibraryKeys.search))
+          .controller!
+          .text,
+      'first',
+    );
+
+    selected.value = second;
+    await tester.pump();
+
+    expect(
+      tester
+          .widget<TextField>(find.byKey(WorldLibraryKeys.search))
+          .controller!
+          .text,
+      'second',
+    );
+  });
 }
+
+final _emptyCallbacks = WorldLibraryCallbacks(
+  onCreate: (name, seed, preset) async {},
+  onImport: () async {},
+  onLoad: (entry) async {},
+  onRename: (entry, name) async {},
+  onDuplicate: (entry) async {},
+  onDelete: (entry) async {},
+  onReset: (entry) async {},
+  onExport: (entry) async {},
+  onShareSeed: (entry) async {},
+);
 
 Future<void> _chooseAction(
   WidgetTester tester,

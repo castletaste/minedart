@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -19,9 +18,6 @@ abstract final class BuilderStudioKeys {
   static const assign = ValueKey<String>('builder-studio-assign');
   static const selectedSlot = ValueKey<String>('builder-selected-slot');
 
-  static ValueKey<String> category(BlockCategory category) =>
-      ValueKey<String>('builder-category-${category.name}');
-
   static ValueKey<String> block(int blockId) =>
       ValueKey<String>('builder-block-$blockId');
 
@@ -32,55 +28,11 @@ abstract final class BuilderStudioKeys {
       ValueKey<String>('builder-hotbar-$slot');
 }
 
-/// Adds the canonical `E` inventory shortcut without coupling it to the game.
-final class BuilderStudioShortcutHost extends StatefulWidget {
-  const BuilderStudioShortcutHost({
-    required this.controller,
-    required this.child,
-    this.onInputCaptureChanged,
-    super.key,
-  });
-
-  final BuilderStudioController controller;
-  final Widget child;
-  final ValueChanged<bool>? onInputCaptureChanged;
-
-  @override
-  State<BuilderStudioShortcutHost> createState() =>
-      _BuilderStudioShortcutHostState();
-}
-
-final class _BuilderStudioShortcutHostState
-    extends State<BuilderStudioShortcutHost> {
-  bool _open = false;
-
-  Future<void> _show() async {
-    if (_open) return;
-    _open = true;
-    try {
-      await showBuilderStudio(
-        context,
-        controller: widget.controller,
-        onInputCaptureChanged: widget.onInputCaptureChanged,
-      );
-    } finally {
-      _open = false;
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => CallbackShortcuts(
-    bindings: <ShortcutActivator, VoidCallback>{
-      const SingleActivator(LogicalKeyboardKey.keyE): () => unawaited(_show()),
-    },
-    child: Focus(autofocus: true, child: widget.child),
-  );
-}
-
 Future<void> showBuilderStudio(
   BuildContext context, {
   required BuilderStudioController controller,
   ValueChanged<bool>? onInputCaptureChanged,
+  LogicalKeyboardKey closeKey = LogicalKeyboardKey.keyE,
 }) => showGeneralDialog<void>(
   context: context,
   barrierDismissible: true,
@@ -92,14 +44,16 @@ Future<void> showBuilderStudio(
     controller: controller,
     onClose: () => Navigator.of(dialogContext).pop(),
     onInputCaptureChanged: onInputCaptureChanged,
+    closeKey: closeKey,
   ),
 );
 
-final class BuilderStudioView extends StatefulWidget {
+final class BuilderStudioView extends StatelessWidget {
   const BuilderStudioView({
     required this.controller,
     required this.onClose,
     this.onInputCaptureChanged,
+    this.closeKey = LogicalKeyboardKey.keyE,
     super.key,
   });
 
@@ -111,6 +65,7 @@ final class BuilderStudioView extends StatefulWidget {
   final BuilderStudioController controller;
   final VoidCallback onClose;
   final ValueChanged<bool>? onInputCaptureChanged;
+  final LogicalKeyboardKey closeKey;
 
   static BuilderStudioSizeClass sizeClassFor(double width) {
     if (width < compactBreakpoint) return BuilderStudioSizeClass.compact;
@@ -118,34 +73,26 @@ final class BuilderStudioView extends StatefulWidget {
     return BuilderStudioSizeClass.expanded;
   }
 
-  @override
-  State<BuilderStudioView> createState() => _BuilderStudioViewState();
-}
-
-final class _BuilderStudioViewState extends State<BuilderStudioView> {
   Map<ShortcutActivator, VoidCallback> get _shortcuts =>
       <ShortcutActivator, VoidCallback>{
-        const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
-        const SingleActivator(LogicalKeyboardKey.keyE): widget.onClose,
+        const SingleActivator(LogicalKeyboardKey.escape): onClose,
+        SingleActivator(closeKey): onClose,
         for (var slot = 0; slot < _digitKeys.length; slot++)
           SingleActivator(_digitKeys[slot]): () {
-            widget.controller.selectHotbarSlot(slot);
+            controller.selectHotbarSlot(slot);
           },
       };
 
   void _activateBlock(int blockId) {
-    widget.controller.assignBlockToHotbar(
-      blockId,
-      widget.controller.selectedHotbarSlot,
-    );
-    widget.onClose();
+    controller.assignBlockToHotbar(blockId, controller.selectedHotbarSlot);
+    onClose();
   }
 
   @override
   Widget build(BuildContext context) => CallbackShortcuts(
     bindings: _shortcuts,
     child: ModalInputRegion(
-      onInputCaptureChanged: widget.onInputCaptureChanged,
+      onInputCaptureChanged: onInputCaptureChanged,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final sizeClass = BuilderStudioView.sizeClassFor(
@@ -190,7 +137,7 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
         ),
         child: SafeArea(
           child: AnimatedBuilder(
-            animation: widget.controller,
+            animation: controller,
             builder: (context, _) => _content(context),
           ),
         ),
@@ -199,7 +146,6 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
   }
 
   Widget _content(BuildContext context) {
-    final controller = widget.controller;
     final targetBlock = controller.entryFor(
       controller.hotbar[controller.selectedHotbarSlot],
     );
@@ -221,7 +167,7 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
               ),
               IconButton(
                 tooltip: 'Close Block inventory',
-                onPressed: widget.onClose,
+                onPressed: onClose,
                 icon: const Icon(Icons.close),
               ),
             ],
@@ -247,10 +193,10 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
         const Divider(height: 1),
         Expanded(child: _catalog(context)),
         const Divider(height: 1),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
           child: Text(
-            '1–9 choose slot  ·  E / Esc close',
+            '1–9 choose slot  ·  ${_keyLabel(closeKey)} / Esc close',
             textAlign: TextAlign.center,
           ),
         ),
@@ -259,7 +205,7 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
   }
 
   Widget _catalog(BuildContext context) {
-    final blocks = widget.controller.visibleBlocks;
+    final blocks = controller.visibleBlocks;
     if (blocks.isEmpty) {
       return Center(
         child: Semantics(
@@ -289,40 +235,24 @@ final class _BuilderStudioViewState extends State<BuilderStudioView> {
   }
 }
 
-final class _BlockTile extends StatefulWidget {
+final class _BlockTile extends StatelessWidget {
   const _BlockTile({required this.entry, required this.onPressed});
 
   final BlockCatalogEntry entry;
   final VoidCallback onPressed;
 
   @override
-  State<_BlockTile> createState() => _BlockTileState();
-}
-
-final class _BlockTileState extends State<_BlockTile> {
-  late final FocusNode _focusNode = FocusNode(
-    debugLabel: 'Inventory block ${widget.entry.id}',
-  );
-
-  @override
-  void dispose() {
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) => Semantics(
-    key: BuilderStudioKeys.blockSemantics(widget.entry.id),
-    label: widget.entry.semanticsLabel,
+    key: BuilderStudioKeys.blockSemantics(entry.id),
+    label: entry.semanticsLabel,
     hint:
         'Replace the selected hotbar slot with this block and close inventory',
     button: true,
-    onTap: widget.onPressed,
+    onTap: onPressed,
     excludeSemantics: true,
     child: OutlinedButton(
-      key: BuilderStudioKeys.block(widget.entry.id),
-      focusNode: _focusNode,
-      onPressed: widget.onPressed,
+      key: BuilderStudioKeys.block(entry.id),
+      onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         padding: const EdgeInsets.all(6),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
@@ -332,7 +262,7 @@ final class _BlockTileState extends State<_BlockTile> {
         children: <Widget>[
           DecoratedBox(
             decoration: BoxDecoration(
-              color: blockColor(widget.entry.id),
+              color: blockColor(entry.id),
               border: Border.all(color: Colors.black45),
               borderRadius: BorderRadius.circular(3),
             ),
@@ -340,7 +270,7 @@ final class _BlockTileState extends State<_BlockTile> {
           ),
           const SizedBox(height: 5),
           Text(
-            widget.entry.name,
+            entry.name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
@@ -350,6 +280,11 @@ final class _BlockTileState extends State<_BlockTile> {
       ),
     ),
   );
+}
+
+String _keyLabel(LogicalKeyboardKey key) {
+  final label = key.keyLabel.trim();
+  return label.isEmpty ? 'Key ${key.keyId}' : label.toUpperCase();
 }
 
 const List<LogicalKeyboardKey> _digitKeys = <LogicalKeyboardKey>[

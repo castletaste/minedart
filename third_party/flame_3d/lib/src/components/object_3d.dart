@@ -22,12 +22,7 @@ import 'package:flame_3d/resources.dart';
 /// {@endtemplate}
 abstract class Object3D extends Component3D {
   /// {@macro object_3d}
-  Object3D({
-    super.position,
-    super.scale,
-    super.rotation,
-    super.children,
-  });
+  Object3D({super.position, super.scale, super.rotation, super.children});
 
   /// Whether an ancestor's AABB was fully inside the frustum, meaning
   /// children can skip their own frustum tests.
@@ -56,8 +51,13 @@ abstract class Object3D extends Component3D {
     if (cullResult == CullResult.inside) {
       _ancestorFullyInside = true;
     }
-    super.renderTree(canvas);
-    _ancestorFullyInside = wasAncestorFullyInside;
+    try {
+      super.renderTree(canvas);
+    } finally {
+      // Child rendering is user-extensible and may throw. Never leak this
+      // traversal's culling state into a following root or camera.
+      _ancestorFullyInside = wasAncestorFullyInside;
+    }
 
     if (cullResult == CullResult.inside || isVisible(camera!)) {
       world.context.submitDraw(this, worldTransformMatrix);

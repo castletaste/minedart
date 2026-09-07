@@ -106,6 +106,10 @@ final class WorldChangeSetBuilder {
     final oldRaw = world.blockAt(x, y, z);
     if (oldRaw == newRaw) return false;
 
+    // Mutate first so a rejected raw value cannot partially alter this
+    // builder's ordering/change bookkeeping.
+    final dirty = world.setBlock(x, y, z, newRaw);
+
     final key = worldPositionKey(x, y, z);
     final first = _changes[key];
     if (first == null) {
@@ -126,7 +130,7 @@ final class WorldChangeSetBuilder {
         newRaw: newRaw,
       );
     }
-    _dirtyChunks.addAll(world.setBlock(x, y, z, newRaw));
+    _dirtyChunks.addAll(dirty);
     return true;
   }
 

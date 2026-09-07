@@ -776,6 +776,28 @@ void main() {
     expect(WorldTickEngine().prime(stable), 0);
   });
 
+  test('resetAndPrime restores falling and persisted TNT work read-only', () {
+    final world = VoxelWorld()
+      ..setBlock(10, 4, 10, Blocks.sand)
+      ..setBlock(20, 4, 20, Blocks.pack(Blocks.tnt, 1));
+    final revisions = [for (final chunk in world.chunks) chunk.revision];
+    final engine = WorldTickEngine(tntFuseTicks: 3)
+      ..enqueue(1, 1, 1)
+      ..tick(world, 1);
+
+    final scheduled = engine.resetAndPrime(world);
+
+    expect(engine.currentTick, 0);
+    expect(scheduled, 2);
+    expect(engine.pendingCount, 2);
+    expect(engine.primedTntCount, 1);
+    expect([for (final chunk in world.chunks) chunk.revision], revisions);
+
+    _drain(engine, world, budget: 64);
+    expect(world.blockAt(10, 0, 10), Blocks.sand);
+    expect(world.blockAt(20, 4, 20), Blocks.air);
+  });
+
   test('capacity one and two converge to the unbounded final topology', () {
     final reference = _boundedFluidFixture();
     final referenceEngine = WorldTickEngine(maxFluidLevel: 2)
