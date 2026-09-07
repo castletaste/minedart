@@ -520,7 +520,7 @@ final class _GameShellState extends State<GameShell>
                 _options.bindingFor(GameInputAction.debugOverlay),
               ): _runtime.game.hud.toggleDebug,
             },
-            child: Focus(autofocus: true, child: child!),
+            child: child!,
           ),
         ),
         MinimapOverlay(state: _minimap),
