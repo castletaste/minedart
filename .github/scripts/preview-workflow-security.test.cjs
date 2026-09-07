@@ -136,3 +136,23 @@ test('production also installs locked Wrangler before exposing credentials', () 
 test('the unprivileged build runs for stacked pull request bases', () => {
   assert.match(productionWorkflow, /\n  pull_request:\n\npermissions:/);
 });
+
+test('preview comments run in a separate trusted job with no deployment credentials', () => {
+  const commentJob = workflow.indexOf('\n  comment:');
+  assert.ok(commentJob > workflow.indexOf('\n  deploy:'));
+  const comment = workflow.slice(commentJob);
+  assert.match(comment, /needs: \[validate, deploy\]/);
+  assert.match(comment, /group: minedart-preview-comment-pr-\$\{\{ needs\.validate\.outputs\.pr_number \}\}/);
+  assert.match(comment, /cancel-in-progress: false/);
+  assert.match(comment, /permissions:\s*\n\s*contents: read\s*\n\s*statuses: read\s*\n\s*pull-requests: write\s*\n\s*steps:/);
+  assert.doesNotMatch(comment, /environment:|secrets\.|download-artifact@|wrangler|\n\s*run:/);
+  assert.match(comment, /actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803/);
+  assert.match(comment, /ref: \$\{\{ github\.event\.repository\.default_branch \}\}/);
+  assert.match(comment, /persist-credentials: false/);
+  assert.match(comment, /actions\/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd/);
+  assert.match(comment, /DEPLOYMENT_URL: \$\{\{ needs\.deploy\.outputs\.deployment_url \}\}/);
+  const script = comment.slice(comment.indexOf('script: |'));
+  assert.match(script, /\.github\/scripts\/preview-comment\.cjs/);
+  assert.doesNotMatch(script, /\$\{\{/);
+  assert.doesNotMatch(workflow.slice(0, commentJob), /pull-requests: write/);
+});

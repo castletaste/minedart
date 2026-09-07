@@ -158,6 +158,9 @@ jobs:
       contents: read
       pull-requests: read
       statuses: write
+    outputs:
+      deployment_url: ${{ steps.published.outputs.deployment_url }}
+      alias_url: ${{ steps.published.outputs.alias_url }}
 
     steps:
       - name: Check out trusted policy
@@ -271,6 +274,7 @@ jobs:
             --commit-dirty=false
 
       - name: Publish exact preview URL on the PR head
+        id: published
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:
           ALIAS_URL: ${{ steps.cloudflare.outputs.pages-deployment-alias-url }}
@@ -292,6 +296,8 @@ jobs:
               aliasUrl: process.env.ALIAS_URL,
               prNumber: process.env.PR_NUMBER,
             });
+            core.setOutput('deployment_url', preview.deploymentUrl);
+            core.setOutput('alias_url', preview.aliasUrl);
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -328,3 +334,53 @@ jobs:
               context: 'Cloudflare Pages preview',
               description: 'Verified preview publication failed',
             });
+
+  comment:
+    name: Update preview comment
+    needs: [validate, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: minedart-preview-comment-pr-${{ needs.validate.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      statuses: read
+      pull-requests: write
+
+    steps:
+      - name: Check out trusted comment publisher
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Create or update the bot's preview comment
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          ALIAS_URL: ${{ needs.deploy.outputs.alias_url }}
+          DEPLOYMENT_URL: ${{ needs.deploy.outputs.deployment_url }}
+          BUILD_SHA: ${{ needs.validate.outputs.build_sha }}
+          EXPECTED_HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          PR_NUMBER: ${{ needs.validate.outputs.pr_number }}
+          SOURCE_RUN_ID: ${{ needs.validate.outputs.run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const path = require('node:path');
+            const {publishPreviewComment} = require(path.join(
+              process.env.GITHUB_WORKSPACE,
+              '.github/scripts/preview-comment.cjs',
+            ));
+            const result = await publishPreviewComment({
+              github,
+              context,
+              prNumber: Number(process.env.PR_NUMBER),
+              headSha: process.env.EXPECTED_HEAD_SHA,
+              buildSha: process.env.BUILD_SHA,
+              sourceRunId: Number(process.env.SOURCE_RUN_ID),
+              deploymentUrl: process.env.DEPLOYMENT_URL,
+              aliasUrl: process.env.ALIAS_URL,
+            });
+            core.info(`Preview comment ${result.action}: ${result.commentUrl ?? result.reason}`);
