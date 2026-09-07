@@ -8,64 +8,79 @@ import 'block_palette.dart';
 import 'hud_state.dart';
 
 class Hotbar extends StatelessWidget {
-  const Hotbar({required this.hud, this.interactionKey, super.key});
+  const Hotbar({
+    required this.hud,
+    this.interactionKey,
+    this.touchControls = false,
+    super.key,
+  });
 
   static const double slotSize = 48;
   static const double slotGap = 4;
 
   final HudState hud;
+  final bool touchControls;
 
   /// Bounds used by [HudOverlay] to keep hotbar clicks out of game actions.
   final GlobalKey? interactionKey;
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: Padding(
-        padding: const EdgeInsets.only(bottom: 18),
-        child: FittedBox(
-          fit: BoxFit.scaleDown,
-          child: ListenableBuilder(
-            listenable: Listenable.merge([
-              hud.selectedSlot,
-              hud.hotbarRevision,
-            ]),
-            builder: (context, _) {
-              final selected = hud.selectedSlot.value;
-              return DecoratedBox(
-                key: interactionKey,
-                decoration: BoxDecoration(
-                  color: const Color(0x66000000),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Padding(
-                  padding: const EdgeInsets.all(4),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: <Widget>[
-                      for (var i = 0; i < hud.blocks.length; i++)
-                        Padding(
-                          padding: EdgeInsets.only(
-                            right: i == hud.blocks.length - 1 ? 0 : slotGap,
-                          ),
-                          child: _HotbarSlot(
-                            blockId: hud.blocks[i],
-                            index: i,
-                            active: i == selected,
-                            onActivate: () => hud.selectSlot(i),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final landscape = constraints.maxWidth > constraints.maxHeight;
+          return Align(
+            alignment: Alignment.bottomCenter,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: touchControls && !landscape ? 152 : 18,
+                left: touchControls ? (landscape ? 148 : 12) : 0,
+                right: touchControls ? (landscape ? 148 : 12) : 0,
+              ),
+              child: touchControls
+                  ? SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: _slots(),
+                    )
+                  : FittedBox(fit: BoxFit.scaleDown, child: _slots()),
+            ),
+          );
+        },
       ),
     );
   }
+
+  Widget _slots() => ListenableBuilder(
+    listenable: Listenable.merge([hud.selectedSlot, hud.hotbarRevision]),
+    builder: (context, _) => DecoratedBox(
+      key: interactionKey,
+      decoration: BoxDecoration(
+        color: const Color(0x66000000),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < hud.blocks.length; i++)
+              Padding(
+                padding: EdgeInsets.only(
+                  right: i == hud.blocks.length - 1 ? 0 : slotGap,
+                ),
+                child: _HotbarSlot(
+                  blockId: hud.blocks[i],
+                  index: i,
+                  active: i == hud.selectedSlot.value,
+                  onActivate: () => hud.selectSlot(i),
+                ),
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 abstract final class HotbarKeys {

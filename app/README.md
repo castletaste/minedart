@@ -79,6 +79,9 @@ After deployment, verify that the document response includes
 `Content-Type: application/wasm`, `window.crossOriginIsolated` is `true`, and
 the browser fetches `main.dart.wasm` rather than falling back to `main.dart.js`.
 
+Touch controls, ownership boundaries, and validation are described in
+[`docs/touch-controls.md`](../docs/touch-controls.md).
+
 Pull request previews use a separate trusted publisher so Cloudflare credentials
 are never exposed to pull request code. That publisher reuses the existing
 `production` environment token after validation and publishes to `pr-<number>`

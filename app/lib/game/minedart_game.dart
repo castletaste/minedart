@@ -8,6 +8,7 @@ import 'package:flame_3d/components.dart';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show KeyEventResult, MediaQuery;
 import 'package:minedart_core/minedart_core.dart';
@@ -20,6 +21,7 @@ import '../input/game_input_service.dart';
 import '../input/mouse_look.dart';
 import '../input/player_input_mapper.dart';
 import '../input/sprint_fov.dart';
+import '../input/touch_input_state.dart';
 import '../hud/hud_state.dart';
 import '../interact/block_interactor.dart';
 import '../pipeline/mesh_pipeline.dart';
@@ -144,6 +146,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _keys.clear();
     _pendingMouseDx = 0;
     _pendingMouseDy = 0;
+    _touchInput.reset();
     _sprintDetector.reset();
     return _inputClient.suspend();
   }
@@ -151,6 +154,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   final DoubleTapSprintDetector _sprintDetector = DoubleTapSprintDetector();
   final FootstepCadence _footstepCadence = FootstepCadence();
   final Set<LogicalKeyboardKey> _keys = <LogicalKeyboardKey>{};
+  final TouchInputState _touchInput = TouchInputState();
   int _footstepSerial = 0;
   GameBindings _bindings = GameBindings();
   double _mouseSensitivity = defaultMouseSensitivity;
@@ -193,8 +197,16 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   bool _hadMouseCapture = false;
   bool _mouseCapturePending = false;
   bool _uiInputCaptured = false;
-  bool simulationPaused = false;
+  bool _appForeground = true;
+  bool _simulationPaused = false;
   int _renderDistanceChunks = 6;
+
+  bool get simulationPaused => _simulationPaused;
+  set simulationPaused(bool paused) {
+    if (_simulationPaused == paused) return;
+    _simulationPaused = paused;
+    if (paused) _touchInput.reset();
+  }
 
   void setRenderDistanceChunks(int chunks) {
     final next = chunks.clamp(2, WorldDims.worldChunksX);
@@ -234,7 +246,64 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   Vector3 get spawnFeet => _spawnFeet;
   double get cameraYaw => _yaw;
   double get cameraPitch => _pitch;
-  bool get isSprinting => _sprintDetector.isSprinting;
+  bool get isSprinting => _sprintDetector.isSprinting || _touchInput.sprintHeld;
+
+  /// Enables the touch source without changing desktop pointer-lock input.
+  void setTouchControlsEnabled(bool enabled) {
+    if (_terminal) {
+      _touchInput.setEnabled(false);
+      return;
+    }
+    _touchInput.setEnabled(enabled);
+  }
+
+  void setTouchMovement({required double forward, required double strafe}) {
+    if (_acceptsTouchInput) {
+      _touchInput.setMovement(forward: forward, strafe: strafe);
+    }
+  }
+
+  void setTouchJumpHeld(bool held) {
+    if (_acceptsTouchInput) _touchInput.setJumpHeld(held);
+  }
+
+  void requestTouchJump() {
+    if (_acceptsTouchInput) _touchInput.requestJump();
+  }
+
+  void setTouchSprintHeld(bool held) {
+    if (_acceptsTouchInput) _touchInput.setSprintHeld(held);
+  }
+
+  void addTouchLookDelta(double dx, double dy) {
+    if (_acceptsTouchInput) _touchInput.addLookDelta(dx, dy);
+  }
+
+  void requestTouchBreak() {
+    if (_acceptsTouchInput) _touchInput.requestBreak();
+  }
+
+  void requestTouchPlace() {
+    if (_acceptsTouchInput) _touchInput.requestPlace();
+  }
+
+  void resetTouchInput() => _touchInput.reset();
+
+  /// Clears held input before a browser tab can suspend this game loop.
+  void setAppForeground(bool foreground) {
+    _appForeground = foreground;
+    if (!foreground) _touchInput.reset();
+  }
+
+  bool get _acceptsTouchInput =>
+      !_terminal &&
+      _resourcesReady &&
+      _touchInput.enabled &&
+      _inputClient.isActive &&
+      _appForeground &&
+      !_uiInputCaptured &&
+      !simulationPaused &&
+      !paused;
 
   /// Look direction derived from the camera rotation quaternion.
   Vector3 get lookDirection => _lookDirection
@@ -245,15 +314,22 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   /// mouse does not also break a block. Platforms without the native bridge
   /// fall back to always-on interaction.
   bool get interactionEnabled =>
+      _canInteract(_BlockInteractionSource.capturedPointer);
+
+  bool _canInteract(_BlockInteractionSource source) => switch (source) {
+    _BlockInteractionSource.capturedPointer =>
       !_terminal &&
-      _inputClient.isActive &&
-      !_uiInputCaptured &&
-      (_inputClient.isCaptured || _mouseCaptureUnavailable);
+          _inputClient.isActive &&
+          !_uiInputCaptured &&
+          (_inputClient.isCaptured || _mouseCaptureUnavailable),
+    _BlockInteractionSource.touchControls => _acceptsTouchInput,
+  };
 
   void setUiInputCaptured(bool captured) {
     if (_uiInputCaptured == captured) return;
     _uiInputCaptured = captured;
     _keys.clear();
+    if (captured) _touchInput.reset();
     _sprintDetector.reset();
     if (captured) {
       unawaited(_releaseMouse().catchError(_reportInputError));
@@ -275,7 +351,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   /// Left click: break the block under the crosshair.
   void breakTargetBlock() {
-    if (!interactionEnabled) return;
+    _breakTargetBlock(_BlockInteractionSource.capturedPointer);
+  }
+
+  void _breakTargetBlock(_BlockInteractionSource source) {
+    if (!_canInteract(source)) return;
     final hit = interactor.target(eyePosition, lookDirection);
     final brokenBlockId = hit == null
         ? Blocks.air
@@ -311,7 +391,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   /// Right click: place the selected hotbar block against the targeted face.
   void placeSelectedBlock() {
-    if (!interactionEnabled) return;
+    _placeSelectedBlock(_BlockInteractionSource.capturedPointer);
+  }
+
+  void _placeSelectedBlock(_BlockInteractionSource source) {
+    if (!_canInteract(source)) return;
     final result = interactor.placeBlock(
       eyePosition,
       lookDirection,
@@ -427,6 +511,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     if (_terminal) return;
     _terminal = true;
     pauseEngine();
+    _touchInput
+      ..reset()
+      ..setEnabled(false);
     if (!_ready.isCompleted) _ready.complete(StateError('Game was removed'));
     _meshCleanup = _meshes?.close() ?? Future<void>.value();
     _inputClient.dispose();
@@ -445,7 +532,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   @override
   void onTapDown(TapDownEvent event) {
-    requestMouseCapture();
+    if (event.deviceKind == PointerDeviceKind.mouse) requestMouseCapture();
   }
 
   /// Requests relative mouse input from a pointer event that hit the game.
@@ -467,9 +554,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   int get _meshQueueCount => _meshes?.pendingCount ?? pipeline.pendingCount;
 
-  void _updateMeshActivity() {
+  void _updateMeshActivity(TouchInputFrame touch) {
     final hasImmediateInput =
-        _pendingMouseDx != 0 || _pendingMouseDy != 0 || _hasInteractiveKeyInput;
+        _pendingMouseDx != 0 ||
+        _pendingMouseDy != 0 ||
+        _hasInteractiveKeyInput ||
+        touch.hasImmediateInput;
     if (hasImmediateInput) {
       pipeline.activity = MeshPipelineActivity.interactive;
     } else if (_playerBody.velocity.length2 > 0.01) {
@@ -609,18 +699,20 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   @override
   void update(double dt) {
     if (_terminal || !_resourcesReady) return;
+    final touch = _touchInput.consumeFrame();
     final telemetry = frameMetrics.telemetry;
     telemetry.recordWallFrame(dt * 1000);
     telemetry.startTiming(PerformanceMetric.update);
     try {
-      _updateMeshActivity();
+      _updateMeshActivity(touch);
       _meshes?.drainPendingCaptures();
-      _updateLook(dt);
+      _updateLook(dt, touch);
+      _applyTouchActions(touch);
       if (!simulationPaused) {
         if (_noclip) {
-          _updateNoclip(dt);
+          _updateNoclip(dt, touch);
         } else {
-          _updatePhysics(dt);
+          _updatePhysics(dt, touch);
         }
         _simulation.advance(dt);
       }
@@ -740,6 +832,15 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     hud.recordAction('$action ${changes.changes.length}');
   }
 
+  void _applyTouchActions(TouchInputFrame touch) {
+    for (var request = 0; request < touch.breakRequests; request++) {
+      _breakTargetBlock(_BlockInteractionSource.touchControls);
+    }
+    for (var request = 0; request < touch.placeRequests; request++) {
+      _placeSelectedBlock(_BlockInteractionSource.touchControls);
+    }
+  }
+
   void _onMouseEvent(MouseLookEvent event) {
     if (_terminal) return;
     switch (event) {
@@ -785,12 +886,14 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     debugPrint('Mouse input failed: $error\n$stack');
   }
 
-  void _updateLook(double dt) {
-    var yawDelta = -_pendingMouseDx * _mouseSensitivity;
+  void _updateLook(double dt, TouchInputFrame touch) {
+    var yawDelta = -(_pendingMouseDx + touch.lookDx) * _mouseSensitivity;
     // Standard FPS convention: mouse up looks up (macOS deltaY grows
     // downward, so it must be negated).
     var pitchDelta =
-        (_invertMouseY ? 1 : -1) * _pendingMouseDy * _mouseSensitivity;
+        (_invertMouseY ? 1 : -1) *
+        (_pendingMouseDy + touch.lookDy) *
+        _mouseSensitivity;
     _pendingMouseDx = 0;
     _pendingMouseDy = 0;
 
@@ -816,32 +919,42 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       ..rotate(_yaw, _pitch);
   }
 
-  void _updatePhysics(double dt) {
+  void _updatePhysics(double dt, TouchInputFrame touch) {
     final input = PlayerInputMapper.fromCameraAxes(
       yaw: _yaw,
-      forward: _axis(
-        _bindings[GameControl.moveForward],
-        _bindings[GameControl.moveBackward],
-      ),
-      strafe: _axis(
-        _bindings[GameControl.strafeRight],
-        _bindings[GameControl.strafeLeft],
-      ),
-      jump: _keys.contains(_bindings[GameControl.jump]),
-      sprint: _sprintDetector.isSprinting,
+      forward:
+          (_axis(
+                    _bindings[GameControl.moveForward],
+                    _bindings[GameControl.moveBackward],
+                  ) +
+                  touch.forward)
+              .clamp(-1.0, 1.0),
+      strafe:
+          (_axis(
+                    _bindings[GameControl.strafeRight],
+                    _bindings[GameControl.strafeLeft],
+                  ) +
+                  touch.strafe)
+              .clamp(-1.0, 1.0),
+      jump:
+          _keys.contains(_bindings[GameControl.jump]) ||
+          touch.jumpHeld ||
+          touch.jumpRequested,
+      sprint: _sprintDetector.isSprinting || touch.sprintHeld,
     );
     if (input.moveX != 0 || input.moveZ != 0 || input.jump) {
       _reportMovementActivity();
     }
     final previousX = _playerBody.position.x;
     final previousZ = _playerBody.position.z;
-    _physics.advance(voxelWorld, _playerBody, input, dt);
+    final physicsSteps = _physics.advance(voxelWorld, _playerBody, input, dt);
+    if (physicsSteps > 0) _touchInput.acknowledgeJumpRequest();
     final movedX = _playerBody.position.x - previousX;
     final movedZ = _playerBody.position.z - previousZ;
     if (_footstepCadence.update(
       horizontalDistance: math.sqrt(movedX * movedX + movedZ * movedZ),
       grounded: _playerBody.onGround,
-      sprinting: _sprintDetector.isSprinting,
+      sprinting: isSprinting,
     )) {
       _playFootstep();
     }
@@ -874,15 +987,22 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     debugPrint('Audio playback failed: $error\n$stack');
   }
 
-  void _updateNoclip(double dt) {
-    final forwardAxis = _axis(
-      _bindings[GameControl.moveForward],
-      _bindings[GameControl.moveBackward],
-    );
-    final strafeAxis = _axis(
-      _bindings[GameControl.strafeRight],
-      _bindings[GameControl.strafeLeft],
-    );
+  void _updateNoclip(double dt, TouchInputFrame touch) {
+    _touchInput.acknowledgeJumpRequest();
+    final forwardAxis =
+        (_axis(
+                  _bindings[GameControl.moveForward],
+                  _bindings[GameControl.moveBackward],
+                ) +
+                touch.forward)
+            .clamp(-1.0, 1.0);
+    final strafeAxis =
+        (_axis(
+                  _bindings[GameControl.strafeRight],
+                  _bindings[GameControl.strafeLeft],
+                ) +
+                touch.strafe)
+            .clamp(-1.0, 1.0);
     if (forwardAxis == 0 && strafeAxis == 0) return;
 
     final sinYaw = math.sin(_yaw);
@@ -952,3 +1072,5 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     hud.recordAction('teleported');
   }
 }
+
+enum _BlockInteractionSource { capturedPointer, touchControls }

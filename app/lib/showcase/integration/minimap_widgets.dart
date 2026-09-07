@@ -20,14 +20,16 @@ final class MinimapViewState {
 }
 
 final class MinimapOverlay extends StatelessWidget {
-  const MinimapOverlay({required this.state, super.key});
+  const MinimapOverlay({required this.state, this.compact = false, super.key});
+
+  final bool compact;
 
   final ValueListenable<MinimapViewState> state;
 
   @override
   Widget build(BuildContext context) => Positioned(
-    right: 14,
-    top: 14,
+    right: 14 + (MediaQuery.maybeOf(context)?.padding.right ?? 0),
+    top: 14 + (MediaQuery.maybeOf(context)?.padding.top ?? 0),
     child: Semantics(
       key: const ValueKey<String>('minimap-overlay'),
       image: true,
@@ -40,8 +42,8 @@ final class MinimapOverlay extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
           ),
           child: SizedBox(
-            width: 150,
-            height: 150,
+            width: compact ? 96 : 150,
+            height: compact ? 96 : 150,
             child: ValueListenableBuilder<MinimapViewState>(
               valueListenable: state,
               builder: (context, value, _) => Stack(

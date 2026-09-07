@@ -8,6 +8,37 @@ import 'package:flame_3d/src/graphics/backend/gpu_bind_cache_counters.dart';
 import 'package:flame_3d/src/graphics/backend/gpu_enums.dart';
 import 'package:flame_3d/src/graphics/backend/gpu_handles.dart';
 
+/// The stage at which a graphics backend could not acquire WebGPU.
+enum GpuInitializationFailureKind {
+  /// The browser does not expose the WebGPU API.
+  apiUnavailable,
+
+  /// WebGPU is present, but no compatible graphics adapter was acquired.
+  adapterUnavailable,
+
+  /// An adapter was acquired, but a graphics device could not be created.
+  deviceUnavailable,
+}
+
+/// A stable, platform-independent description of GPU startup failure.
+///
+/// [cause] is retained for diagnostics. Applications should use [kind] when
+/// choosing user-facing recovery guidance instead of displaying [cause].
+final class GpuInitializationException implements Exception {
+  const GpuInitializationException(this.kind, {this.cause});
+
+  final GpuInitializationFailureKind kind;
+  final Object? cause;
+
+  @override
+  String toString() {
+    final cause = this.cause;
+    return cause == null
+        ? 'GpuInitializationException($kind)'
+        : 'GpuInitializationException($kind, cause: $cause)';
+  }
+}
+
 /// {@template gpu_backend}
 /// A rendering backend: the abstraction over a concrete low-level GPU API.
 ///

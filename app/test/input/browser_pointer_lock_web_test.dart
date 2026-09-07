@@ -24,13 +24,13 @@ void main() {
 
     final primary = web.PointerEvent(
       'pointerdown',
-      web.PointerEventInit(button: 0, cancelable: true),
+      web.PointerEventInit(button: 0, cancelable: true, pointerType: 'mouse'),
     );
     web.document.dispatchEvent(primary);
 
     final secondary = web.PointerEvent(
       'pointerdown',
-      web.PointerEventInit(button: 2, cancelable: true),
+      web.PointerEventInit(button: 2, cancelable: true, pointerType: 'mouse'),
     );
     web.document.dispatchEvent(secondary);
     final contextMenu = web.MouseEvent(
@@ -60,7 +60,7 @@ void main() {
 
     final primary = web.PointerEvent(
       'pointerdown',
-      web.PointerEventInit(button: 0, cancelable: true),
+      web.PointerEventInit(button: 0, cancelable: true, pointerType: 'mouse'),
     );
     web.document.dispatchEvent(primary);
     final contextMenu = web.MouseEvent(
@@ -86,7 +86,11 @@ void main() {
       web.document.dispatchEvent(
         web.PointerEvent(
           'pointerdown',
-          web.PointerEventInit(button: 2, cancelable: true),
+          web.PointerEventInit(
+            button: 2,
+            cancelable: true,
+            pointerType: 'mouse',
+          ),
         ),
       );
       await Future<void>.delayed(const Duration(milliseconds: 180));
@@ -99,13 +103,21 @@ void main() {
         ..dispatchEvent(
           web.PointerEvent(
             'pointerdown',
-            web.PointerEventInit(button: 2, cancelable: true),
+            web.PointerEventInit(
+              button: 2,
+              cancelable: true,
+              pointerType: 'mouse',
+            ),
           ),
         )
         ..dispatchEvent(
           web.PointerEvent(
             'pointerdown',
-            web.PointerEventInit(button: 2, cancelable: true),
+            web.PointerEventInit(
+              button: 2,
+              cancelable: true,
+              pointerType: 'mouse',
+            ),
           ),
         );
 
@@ -113,6 +125,30 @@ void main() {
       expect(delayedMenu.defaultPrevented, isTrue);
     },
   );
+
+  test('locked DOM bridge ignores touch and pen pointer actions', () {
+    final bridge = BrowserPointerLock.forTesting(isLocked: () => true);
+    addTearDown(bridge.dispose);
+    final events = <MouseLookEvent>[];
+    final subscription = bridge.events.listen(events.add);
+    addTearDown(subscription.cancel);
+
+    final touch = web.PointerEvent(
+      'pointerdown',
+      web.PointerEventInit(button: 0, cancelable: true, pointerType: 'touch'),
+    );
+    final pen = web.PointerEvent(
+      'pointerdown',
+      web.PointerEventInit(button: 2, cancelable: true, pointerType: 'pen'),
+    );
+    web.document
+      ..dispatchEvent(touch)
+      ..dispatchEvent(pen);
+
+    expect(events, isEmpty);
+    expect(touch.defaultPrevented, isFalse);
+    expect(pen.defaultPrevented, isFalse);
+  });
 
   test('release waits for pointer lock change acknowledgement', () async {
     var locked = true;

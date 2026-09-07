@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flame_3d/graphics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/audio/audio.dart';
@@ -40,7 +41,14 @@ void main() {
       attempts.first.completeError(StateError('GPU unavailable'));
       await tester.pump();
       expect(find.text('Minedart could not start'), findsOneWidget);
-      expect(find.textContaining('GPU unavailable'), findsOneWidget);
+      expect(
+        find.text(
+          'The game could not finish loading. '
+          'Check your connection and try again.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('GPU unavailable'), findsNothing);
 
       await tester.tap(find.text('Retry'));
       await tester.tap(find.text('Retry'));
@@ -117,6 +125,45 @@ void main() {
 
       expect(childDisposals, 1);
       expect(pendingDisposals, 0);
+    });
+
+    testWidgets('shows safe recovery guidance for each GPU failure stage', (
+      tester,
+    ) async {
+      const cases =
+          <GpuInitializationFailureKind, (String title, String description)>{
+            GpuInitializationFailureKind.apiUnavailable: (
+              'WebGPU is unavailable',
+              'Update your browser and make sure hardware acceleration is enabled.',
+            ),
+            GpuInitializationFailureKind.adapterUnavailable: (
+              'No compatible graphics adapter',
+              'Enable hardware acceleration or try another supported browser.',
+            ),
+            GpuInitializationFailureKind.deviceUnavailable: (
+              'Graphics could not start',
+              'Close other graphics-heavy tabs, then try again.',
+            ),
+          };
+
+      for (final MapEntry(key: kind, value: message) in cases.entries) {
+        await tester.pumpWidget(
+          ShowcaseBootstrap(
+            key: ValueKey(kind),
+            load: () async => throw GpuInitializationException(
+              kind,
+              cause: StateError('private driver detail'),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.text(message.$1), findsOneWidget);
+        expect(find.text(message.$2), findsOneWidget);
+        expect(find.textContaining('private driver detail'), findsNothing);
+
+        await tester.pumpWidget(const SizedBox());
+      }
     });
   });
 
