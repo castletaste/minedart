@@ -67,12 +67,16 @@ final class PauseOptionsView extends StatefulWidget {
     required this.controller,
     required this.callbacks,
     this.onInputCaptureChanged,
+    this.touchControls = false,
+    this.onTouchControlsChanged,
     super.key,
   });
 
   final OptionsController controller;
   final PauseMenuCallbacks callbacks;
   final ValueChanged<bool>? onInputCaptureChanged;
+  final bool touchControls;
+  final ValueChanged<bool>? onTouchControlsChanged;
 
   @override
   State<PauseOptionsView> createState() => _PauseOptionsViewState();
@@ -282,6 +286,8 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
       controller: widget.controller,
       callbacks: widget.callbacks,
       onStartRebinding: _startRebinding,
+      touchControls: widget.touchControls,
+      onTouchControlsChanged: widget.onTouchControlsChanged,
     ),
   );
 }

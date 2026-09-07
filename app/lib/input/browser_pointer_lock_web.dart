@@ -40,6 +40,7 @@ final class BrowserPointerLock {
       try {
         if (_disposed || !isLocked) return;
         final pointer = event as web.PointerEvent;
+        if (pointer.pointerType != 'mouse') return;
         if (pointer.button == 0) {
           event.preventDefault();
           _events.add(const MousePrimaryPressed());

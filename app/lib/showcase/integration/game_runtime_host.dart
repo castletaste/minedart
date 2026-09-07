@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../game/minedart_game.dart';
 import '../../hud/hud_overlay.dart';
+import '../../hud/touch_controls.dart';
 import 'world_runtime.dart';
 import 'world_session_coordinator.dart';
 
@@ -25,6 +26,7 @@ final class GameRuntimeHostController extends ChangeNotifier
   void setForeground(bool foreground) {
     _foreground = foreground;
     for (final runtime in _visible) {
+      runtime.game.setAppForeground(foreground);
       if (foreground) {
         runtime.pipeline.resumeDeadlines();
       } else {
@@ -41,6 +43,7 @@ final class GameRuntimeHostController extends ChangeNotifier
     if (!_attached) throw StateError('Game host is detached');
     final runtime = candidate as WorldRuntime;
     runtime.game.pauseEngine();
+    runtime.game.setAppForeground(_foreground);
     if (!_foreground) runtime.pipeline.pauseDeadlines();
     _visible.add(runtime);
     notifyListeners();
@@ -78,8 +81,17 @@ final class GameRuntimeHostController extends ChangeNotifier
 }
 
 final class GameRuntimeHost extends StatefulWidget {
-  const GameRuntimeHost({required this.controller, super.key});
+  const GameRuntimeHost({
+    required this.controller,
+    this.touchControls = false,
+    this.onPause,
+    this.onInventory,
+    super.key,
+  });
   final GameRuntimeHostController controller;
+  final bool touchControls;
+  final VoidCallback? onPause;
+  final VoidCallback? onInventory;
 
   @override
   State<GameRuntimeHost> createState() => _GameRuntimeHostState();
@@ -109,6 +121,9 @@ final class _GameRuntimeHostState extends State<GameRuntimeHost> {
       controller: widget.controller,
       runtime: runtime,
       active: active,
+      touchControls: widget.touchControls,
+      onPause: widget.onPause,
+      onInventory: widget.onInventory,
     );
   }
 }
@@ -119,12 +134,18 @@ final class _RuntimeView extends StatefulWidget {
     required this.controller,
     required this.runtime,
     required this.active,
+    required this.touchControls,
+    this.onPause,
+    this.onInventory,
     super.key,
   });
 
   final GameRuntimeHostController controller;
   final WorldRuntime runtime;
   final bool active;
+  final bool touchControls;
+  final VoidCallback? onPause;
+  final VoidCallback? onInventory;
 
   @override
   State<_RuntimeView> createState() => _RuntimeViewState();
@@ -137,11 +158,13 @@ final class _RuntimeViewState extends State<_RuntimeView> {
   void initState() {
     super.initState();
     widget.controller._mounted.add(widget.runtime);
+    _syncTouchMode();
   }
 
   @override
   void didUpdateWidget(_RuntimeView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncTouchMode();
     if (identical(oldWidget.controller, widget.controller) &&
         identical(oldWidget.runtime, widget.runtime)) {
       return;
@@ -150,8 +173,13 @@ final class _RuntimeViewState extends State<_RuntimeView> {
     widget.controller._mounted.add(widget.runtime);
   }
 
+  void _syncTouchMode() => widget.runtime.game.setTouchControlsEnabled(
+    widget.active && widget.touchControls,
+  );
+
   @override
   void dispose() {
+    widget.runtime.game.setTouchControlsEnabled(false);
     widget.controller._mounted.remove(widget.runtime);
     _keyboardFocus.dispose();
     super.dispose();
@@ -188,6 +216,24 @@ final class _RuntimeViewState extends State<_RuntimeView> {
             kHudOverlayId: (_, game) => HudOverlay(
               hud: game.hud,
               frameMetrics: game.frameMetrics,
+              touchControls: widget.active && widget.touchControls
+                  ? TouchControls(
+                      onMovement: (offset) => game.setTouchMovement(
+                        forward: -offset.dy,
+                        strafe: offset.dx,
+                      ),
+                      onLook: (delta) =>
+                          game.addTouchLookDelta(delta.dx, delta.dy),
+                      onJump: game.setTouchJumpHeld,
+                      onJumpPressed: game.requestTouchJump,
+                      onSprint: game.setTouchSprintHeld,
+                      onBreak: game.requestTouchBreak,
+                      onPlace: game.requestTouchPlace,
+                      onPause: widget.onPause ?? () {},
+                      onInventory: widget.onInventory ?? () {},
+                      onReset: game.resetTouchInput,
+                    )
+                  : null,
               onCapture: _captureInput,
               onPrimary: kIsWeb ? () {} : game.breakTargetBlock,
               onSecondary: kIsWeb ? () {} : game.placeSelectedBlock,

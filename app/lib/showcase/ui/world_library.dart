@@ -39,6 +39,7 @@ final class WorldLibraryView extends StatefulWidget {
     required this.callbacks,
     required this.onClose,
     this.onInputCaptureChanged,
+    this.autofocusSearch = true,
     super.key,
   });
 
@@ -46,6 +47,7 @@ final class WorldLibraryView extends StatefulWidget {
   final WorldLibraryCallbacks callbacks;
   final VoidCallback onClose;
   final ValueChanged<bool>? onInputCaptureChanged;
+  final bool autofocusSearch;
 
   @override
   State<WorldLibraryView> createState() => _WorldLibraryViewState();
@@ -131,7 +133,7 @@ final class _WorldLibraryViewState extends State<WorldLibraryView> {
             final search = TextField(
               key: WorldLibraryKeys.search,
               controller: _searchController,
-              autofocus: true,
+              autofocus: widget.autofocusSearch,
               onChanged: widget.controller.setQuery,
               decoration: const InputDecoration(
                 labelText: 'Search worlds',

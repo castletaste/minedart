@@ -18,6 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="Minedart Classic Showcase — a finite voxel world and adaptive Flutter builder studio powered by WebGPU.">
   <meta name="theme-color" content="#153C25">
 
@@ -32,16 +33,150 @@
 
   <title>Minedart Classic Showcase</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      background: #0b1f13;
+      color: #f2f7f1;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #startup-loader {
+      box-sizing: border-box;
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: max(24px, env(safe-area-inset-top))
+        max(24px, env(safe-area-inset-right))
+        max(24px, env(safe-area-inset-bottom))
+        max(24px, env(safe-area-inset-left));
+      background: radial-gradient(circle at top, #204f30 0, #0b1f13 62%);
+      text-align: center;
+    }
+
+    .startup-card {
+      width: min(100%, 420px);
+    }
+
+    .startup-mark {
+      display: block;
+      margin-bottom: 16px;
+      color: #9ad27f;
+      font-size: clamp(32px, 8vw, 48px);
+      font-weight: 800;
+      letter-spacing: 0.04em;
+    }
+
+    .startup-spinner {
+      width: 36px;
+      height: 36px;
+      box-sizing: border-box;
+      margin: 0 auto 20px;
+      border: 4px solid rgba(154, 210, 127, 0.25);
+      border-top-color: #9ad27f;
+      border-radius: 50%;
+      animation: startup-spin 0.9s linear infinite;
+    }
+
+    #startup-title {
+      margin: 0;
+      font-size: 22px;
+    }
+
+    #startup-detail {
+      margin: 10px 0 0;
+      color: #c9d8c8;
+      line-height: 1.5;
+    }
+
+    #startup-retry {
+      margin-top: 22px;
+      padding: 11px 20px;
+      border: 0;
+      border-radius: 999px;
+      background: #9ad27f;
+      color: #102313;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+
+    #startup-retry:focus-visible {
+      outline: 3px solid #ffffff;
+      outline-offset: 3px;
+    }
+
+    [hidden] {
+      display: none !important;
+    }
+
+    noscript p {
+      position: fixed;
+      inset: 0;
+      z-index: 1;
+      display: grid;
+      place-items: center;
+      box-sizing: border-box;
+      margin: 0;
+      padding: 24px;
+      background: #0b1f13;
+      text-align: center;
+    }
+
+    @keyframes startup-spin {
+      to { transform: rotate(360deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .startup-spinner { animation: none; }
+    }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+  <main id="startup-loader" role="status" aria-live="polite" aria-busy="true">
+    <div class="startup-card">
+      <span class="startup-mark">MINEDART</span>
+      <div id="startup-spinner" class="startup-spinner" aria-hidden="true"></div>
+      <h1 id="startup-title">Loading game engine…</h1>
+      <p id="startup-detail">Preparing the world in your browser.</p>
+      <button id="startup-retry" type="button" hidden>Retry</button>
+    </div>
+  </main>
+  <noscript>
+    <p>Minedart requires JavaScript to run.</p>
+  </noscript>
+  <script>
+    window.minedartLoader = (() => {
+      const root = document.getElementById('startup-loader');
+      const spinner = document.getElementById('startup-spinner');
+      const title = document.getElementById('startup-title');
+      const detail = document.getElementById('startup-detail');
+      const retry = document.getElementById('startup-retry');
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
-  <script src="flutter_bootstrap.js" async></script>
+      retry.addEventListener('click', () => window.location.reload());
+
+      return {
+        complete() {
+          root.remove();
+        },
+        fail() {
+          root.setAttribute('role', 'alert');
+          root.setAttribute('aria-busy', 'false');
+          spinner.hidden = true;
+          title.textContent = 'Minedart could not start';
+          detail.textContent = 'The game engine could not finish loading. Check your connection and try again.';
+          retry.hidden = false;
+          retry.focus();
+        },
+      };
+    })();
+  </script>
+  <script
+    src="flutter_bootstrap.js"
+    async
+    onerror="window.minedartLoader.fail()"
+  ></script>
 </body>
 </html>

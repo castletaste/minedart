@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 
 import '../../audio/audio.dart';
 import '../../data/worlds/worlds.dart';
 import '../../game/minedart_game.dart';
+import '../../input/touch_capabilities.dart';
 import '../controller/showcase_controllers.dart';
 import '../render/showcase_render.dart' as renderer;
 import '../ui/controls_hint.dart';
@@ -54,6 +56,10 @@ final class _GameShellState extends State<GameShell>
   Timer? _minimapTimer;
   int _minimapTicks = 0;
 
+  final ValueNotifier<bool> _touchControls = ValueNotifier(
+    prefersTouchControls,
+  );
+  bool _touchModeOverridden = false;
   bool _gameLoaded = false;
   bool _modalOpen = false;
   bool get _switchingWorld => _session.isBusy;
@@ -62,9 +68,18 @@ final class _GameShellState extends State<GameShell>
   final ControlsHintIdleState _controlsHintIdle = ControlsHintIdleState();
   FogPreset? _lastAppliedOptionsFog;
   bool _syncingRenderDistance = false;
-  late final InputCaptureCoordinator _inputCapture = InputCaptureCoordinator(
-    (captured) => _runtime.game.setUiInputCaptured(captured),
-  );
+  late final InputCaptureCoordinator _inputCapture = InputCaptureCoordinator((
+    captured,
+  ) {
+    _runtime.game.setUiInputCaptured(captured);
+    // Removing touch widgets drops their pointer IDs across modal routes.
+    // ModalInputRegion can release ownership from dispose while the element
+    // tree is locked. The input gate above changes immediately; defer only UI.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
+  });
 
   BuildContext? get _navigatorContext => mounted ? context : null;
 
@@ -290,16 +305,25 @@ final class _GameShellState extends State<GameShell>
         requestFocus: true,
         builder: (dialogContext) => Dialog.fullscreen(
           backgroundColor: Colors.transparent,
-          child: PauseOptionsView(
-            controller: _options,
-            onInputCaptureChanged: _onModalInputCaptureChanged,
-            callbacks: PauseMenuCallbacks(
-              onResume: () => Navigator.of(dialogContext).pop(),
-              onOpenWorldLibrary: () =>
-                  _transitionModal(dialogContext, _showWorldLibrary),
-              onOpenRenderLab: () =>
-                  _transitionModal(dialogContext, _showRenderLab),
-              onSaveAndQuit: () => _launch(_saveAndOpenLibrary(dialogContext)),
+          child: ValueListenableBuilder<bool>(
+            valueListenable: _touchControls,
+            builder: (context, touchControls, _) => PauseOptionsView(
+              controller: _options,
+              touchControls: touchControls,
+              onTouchControlsChanged: (enabled) {
+                _touchModeOverridden = true;
+                _touchControls.value = enabled;
+              },
+              onInputCaptureChanged: _onModalInputCaptureChanged,
+              callbacks: PauseMenuCallbacks(
+                onResume: () => Navigator.of(dialogContext).pop(),
+                onOpenWorldLibrary: () =>
+                    _transitionModal(dialogContext, _showWorldLibrary),
+                onOpenRenderLab: () =>
+                    _transitionModal(dialogContext, _showRenderLab),
+                onSaveAndQuit: () =>
+                    _launch(_saveAndOpenLibrary(dialogContext)),
+              ),
             ),
           ),
         ),
@@ -402,6 +426,7 @@ final class _GameShellState extends State<GameShell>
         builder: (dialogContext) => Dialog.fullscreen(
           child: WorldLibraryView(
             controller: _worldLibrary,
+            autofocusSearch: !_touchControls.value,
             callbacks: _libraryActions.callbacks(
               onActivated: () {
                 if (mounted && dialogContext.mounted) {
@@ -481,6 +506,7 @@ final class _GameShellState extends State<GameShell>
     _worldLibrary.dispose();
     _minimapTimer?.cancel();
     _minimap.dispose();
+    _touchControls.dispose();
     unawaited(_shutdown());
     super.dispose();
   }
@@ -501,46 +527,73 @@ final class _GameShellState extends State<GameShell>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    backgroundColor: const Color(0xFF82C8FF),
-    body: Stack(
-      children: [
-        ListenableBuilder(
-          listenable: _options,
-          child: GameRuntimeHost(controller: _host),
-          builder: (context, child) => CallbackShortcuts(
-            bindings: <ShortcutActivator, VoidCallback>{
-              const SingleActivator(LogicalKeyboardKey.escape): () =>
-                  _launch(_showPauseOptions()),
-              SingleActivator(
-                _options.bindingFor(GameInputAction.openInventory),
-              ): () =>
-                  _launch(_showBuilder()),
-              SingleActivator(
-                _options.bindingFor(GameInputAction.debugOverlay),
-              ): _runtime.game.hud.toggleDebug,
-            },
-            child: child!,
-          ),
-        ),
-        MinimapOverlay(state: _minimap),
-        if (_controlsHintIdle.visible)
-          _StartupControlsOverlay(options: _options),
-        if (_switchingWorld)
-          const Positioned.fill(
-            child: ColoredBox(
-              color: Color(0x99000000),
-              child: Center(child: CircularProgressIndicator()),
+  Widget build(BuildContext context) => ValueListenableBuilder<bool>(
+    valueListenable: _touchControls,
+    builder: (context, touchControls, _) => Scaffold(
+      backgroundColor: const Color(0xFF82C8FF),
+      body: Stack(
+        children: [
+          ListenableBuilder(
+            listenable: _options,
+            child: Listener(
+              onPointerDown: (event) {
+                if (event.kind == PointerDeviceKind.touch &&
+                    !touchControls &&
+                    !_touchModeOverridden) {
+                  _touchControls.value = true;
+                }
+              },
+              child: GameRuntimeHost(
+                controller: _host,
+                touchControls:
+                    touchControls &&
+                    !_inputCapture.isCaptured &&
+                    !_switchingWorld,
+                onPause: () => _launch(_showPauseOptions()),
+                onInventory: () => _launch(_showBuilder()),
+              ),
+            ),
+            builder: (context, child) => CallbackShortcuts(
+              bindings: <ShortcutActivator, VoidCallback>{
+                const SingleActivator(LogicalKeyboardKey.escape): () =>
+                    _launch(_showPauseOptions()),
+                SingleActivator(
+                  _options.bindingFor(GameInputAction.openInventory),
+                ): () =>
+                    _launch(_showBuilder()),
+                SingleActivator(
+                  _options.bindingFor(GameInputAction.debugOverlay),
+                ): _runtime.game.hud.toggleDebug,
+              },
+              child: child!,
             ),
           ),
-      ],
+          MinimapOverlay(state: _minimap, compact: touchControls),
+          if (_controlsHintIdle.visible)
+            _StartupControlsOverlay(
+              options: _options,
+              touchControls: touchControls,
+            ),
+          if (_switchingWorld)
+            const Positioned.fill(
+              child: ColoredBox(
+                color: Color(0x99000000),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            ),
+        ],
+      ),
     ),
   );
 }
 
 final class _StartupControlsOverlay extends StatelessWidget {
-  const _StartupControlsOverlay({required this.options});
+  const _StartupControlsOverlay({
+    required this.options,
+    required this.touchControls,
+  });
   final OptionsController options;
+  final bool touchControls;
 
   @override
   Widget build(BuildContext context) => Positioned.fill(
@@ -548,6 +601,27 @@ final class _StartupControlsOverlay extends StatelessWidget {
       child: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
+            if (touchControls) {
+              return Align(
+                alignment: Alignment.topCenter,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 118, 16, 0),
+                  child: Material(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surface.withValues(alpha: 0.9),
+                    borderRadius: BorderRadius.circular(8),
+                    child: const Padding(
+                      padding: EdgeInsets.all(8),
+                      child: Text(
+                        'Left stick to move · Drag to look',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
             final compact = constraints.maxWidth < 700;
             return Padding(
               padding: EdgeInsets.fromLTRB(16, compact ? 176 : 16, 16, 16),
