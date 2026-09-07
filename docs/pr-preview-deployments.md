@@ -26,6 +26,23 @@ build SHA from the source artifact name. It rechecks the open PR and exact head
 immediately before invoking Wrangler. Same-repository stacked pull requests are
 supported; the publisher still rejects fork heads and foreign base repositories.
 
+After deployment succeeds, a separate job creates or updates one
+`github-actions[bot]` comment with the immutable build link, latest-PR alias,
+full PR head and tested build SHAs, and source build checks. It only updates its
+own marked comment; human comments and other bots' comments are untouched.
+The job has `pull-requests: write`, read-only contents/status access, no deployment
+environment, no Cloudflare secrets, and no downloaded PR artifact. It executes
+only the comment publisher checked out from the default branch.
+
+Comment writes are serialized per PR without cancelling an in-flight write.
+Immediately before writing, the publisher checks the latest successful preview
+status and rechecks the open PR's exact head. Stale or superseded deployments
+leave the existing comment alone, and an identical rerun does not rewrite it.
+GitHub reads and comment writes cannot be atomic; a push during the final API
+request can still leave the preceding build's comment until the next successful
+deployment. Its explicit SHAs and immutable link identify the actual build.
+A comment failure does not change the successful deployment's commit status.
+
 ## One-time setup
 
 1. Use the existing GitHub environment named `production` for both publishers.
