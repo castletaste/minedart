@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flame/game.dart' show GameWidget;
 import 'package:flame_3d/graphics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/audio/audio.dart';
 import 'package:minedart/data/worlds/worlds.dart';
+import 'package:minedart/game/minedart_game.dart';
+import 'package:minedart/hud/hud_overlay.dart';
 import 'package:minedart/input/game_input_service.dart';
 import 'package:minedart/input/mouse_look.dart';
 import 'package:minedart/pipeline/mesh_pipeline_base.dart';
@@ -16,11 +19,201 @@ import 'package:minedart/showcase/integration/game_shell.dart';
 import 'package:minedart/showcase/integration/showcase_app.dart';
 import 'package:minedart/showcase/integration/world_runtime.dart';
 import 'package:minedart/showcase/integration/world_session_coordinator.dart';
+import 'package:minedart/showcase/ui/builder_studio.dart';
 import 'package:minedart/showcase/ui/pause_options.dart';
 import 'package:minedart_core/minedart_core.dart';
 
 void main() {
   setUpAll(_NoopGpuBackend.new);
+
+  testWidgets('game receives movement and hotbar keys on startup', (
+    tester,
+  ) async {
+    final harness = await _Harness.create();
+    await tester.pumpWidget(
+      ShowcaseApp(
+        repository: harness.repository,
+        audio: harness.audio,
+        initialRuntime: harness.runtime,
+      ),
+    );
+    await tester.pump();
+    var movementEvents = 0;
+    harness.runtime.game.onMovementActivity = () => movementEvents++;
+
+    for (final key in [
+      LogicalKeyboardKey.keyW,
+      LogicalKeyboardKey.keyA,
+      LogicalKeyboardKey.keyS,
+      LogicalKeyboardKey.keyD,
+      LogicalKeyboardKey.space,
+    ]) {
+      await tester.sendKeyEvent(key);
+    }
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit5);
+
+    expect(movementEvents, 5);
+    expect(harness.runtime.game.hud.selectedSlot.value, 4);
+    await harness.unmount(tester);
+  });
+
+  testWidgets('menus own keys until gameplay focus is restored', (
+    tester,
+  ) async {
+    final harness = await _Harness.create();
+    await tester.pumpWidget(
+      ShowcaseApp(
+        repository: harness.repository,
+        audio: harness.audio,
+        initialRuntime: harness.runtime,
+      ),
+    );
+    await tester.pump();
+    var movementEvents = 0;
+    harness.runtime.game.onMovementActivity = () => movementEvents++;
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
+    await tester.pumpAndSettle();
+    expect(find.byType(BuilderStudioView), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 0);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(BuilderStudioView), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 1);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(PauseOptionsView), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 1);
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(PauseOptionsView), findsNothing);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 2);
+    await harness.unmount(tester);
+  });
+
+  testWidgets('surface capture restores keyboard focus but respects a modal', (
+    tester,
+  ) async {
+    final harness = await _Harness.create();
+    final host = GameRuntimeHostController(harness.runtime);
+    final otherFocus = FocusNode();
+    addTearDown(otherFocus.dispose);
+    addTearDown(host.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Stack(
+          children: [
+            GameRuntimeHost(controller: host),
+            Focus(focusNode: otherFocus, child: const SizedBox()),
+          ],
+        ),
+      ),
+    );
+    await tester.pump();
+    var movementEvents = 0;
+    harness.runtime.game.onMovementActivity = () => movementEvents++;
+    otherFocus.requestFocus();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 0);
+
+    // Exercise the real HUD callback while GPU asset loading is pending.
+    final gameFinder = find.byType(GameWidget<MinedartGame>);
+    final gameWidget = tester.widget<GameWidget<MinedartGame>>(gameFinder);
+    final hud =
+        gameWidget.overlayBuilderMap![kHudOverlayId]!(
+              tester.element(gameFinder),
+              harness.runtime.game,
+            )
+            as HudOverlay;
+    hud.onCapture();
+    await tester.pump();
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 1);
+
+    final dialog = showDialog<void>(
+      context: tester.element(gameFinder),
+      builder: (_) => const Dialog(child: TextField(autofocus: true)),
+    );
+    await tester.pumpAndSettle();
+    final modalFocus = FocusManager.instance.primaryFocus;
+    hud.onCapture();
+    await tester.pump();
+    expect(FocusManager.instance.primaryFocus, same(modalFocus));
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+    expect(movementEvents, 1);
+    Navigator.of(tester.element(find.byType(Dialog))).pop();
+    await tester.pumpAndSettle();
+    await dialog;
+    await tester.pumpWidget(const SizedBox());
+    await harness.disposeUnhosted(tester);
+  });
+
+  for (final duringModal in [false, true]) {
+    testWidgets('world activation routes keyboard focus (modal=$duringModal)', (
+      tester,
+    ) async {
+      final initial = await _Harness.create();
+      final candidate = await _Harness.create(id: 'candidate');
+      final host = GameRuntimeHostController(initial.runtime);
+      addTearDown(host.dispose);
+      await tester.pumpWidget(
+        MaterialApp(home: GameRuntimeHost(controller: host)),
+      );
+      await tester.pump();
+      var initialEvents = 0;
+      var candidateEvents = 0;
+      initial.runtime.game.onMovementActivity = () => initialEvents++;
+      candidate.runtime.game.onMovementActivity = () => candidateEvents++;
+
+      final staging = host.stage(candidate.runtime);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+      expect(initialEvents, 1);
+      expect(
+        candidateEvents,
+        0,
+        reason: 'A staged world must not receive keys',
+      );
+
+      Future<void>? dialog;
+      FocusNode? modalFocus;
+      if (duringModal) {
+        dialog = showDialog<void>(
+          context: tester.element(find.byType(GameRuntimeHost)),
+          builder: (_) => const Dialog(child: TextField(autofocus: true)),
+        );
+        await tester.pumpAndSettle();
+        modalFocus = FocusManager.instance.primaryFocus;
+      }
+
+      // Acknowledge mounting without GPU resources; only focus routing is
+      // under test. Both engines remain paused throughout the transition.
+      candidate.runtime.game.onMount();
+      await staging;
+      host.commit(candidate.runtime);
+      await tester.pump();
+      if (duringModal) {
+        expect(FocusManager.instance.primaryFocus, same(modalFocus));
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+        expect(candidateEvents, 0);
+        Navigator.of(tester.element(find.byType(Dialog))).pop();
+        await tester.pumpAndSettle();
+        await dialog;
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
+      expect(initialEvents, 1);
+      expect(candidateEvents, 1);
+      await tester.pumpWidget(const SizedBox());
+      await initial.disposeUnhosted(tester);
+      await candidate.disposeUnhosted(tester);
+    });
+  }
 
   testWidgets('options update preserves the mounted game host', (tester) async {
     final harness = await _Harness.create();

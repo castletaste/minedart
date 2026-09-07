@@ -152,6 +152,8 @@ final class _RuntimeView extends StatefulWidget {
 }
 
 final class _RuntimeViewState extends State<_RuntimeView> {
+  final FocusNode _keyboardFocus = FocusNode(debugLabel: 'Game keyboard');
+
   @override
   void initState() {
     super.initState();
@@ -179,7 +181,14 @@ final class _RuntimeViewState extends State<_RuntimeView> {
   void dispose() {
     widget.runtime.game.setTouchControlsEnabled(false);
     widget.controller._mounted.remove(widget.runtime);
+    _keyboardFocus.dispose();
     super.dispose();
+  }
+
+  void _captureInput() {
+    if (!widget.active || !(ModalRoute.isCurrentOf(context) ?? true)) return;
+    _keyboardFocus.requestFocus();
+    widget.runtime.game.requestMouseCapture();
   }
 
   @override
@@ -191,7 +200,10 @@ final class _RuntimeViewState extends State<_RuntimeView> {
         ignoring: !widget.active,
         child: GameWidget<MinedartGame>(
           game: widget.runtime.game,
-          autofocus: false,
+          focusNode: _keyboardFocus,
+          // A staged world must wait until it is active and its route is
+          // current, otherwise its initial focus can steal a modal's keys.
+          autofocus: widget.active && (ModalRoute.isCurrentOf(context) ?? true),
           backgroundBuilder: (_) => const ColoredBox(color: Color(0xFF82C8FF)),
           errorBuilder: (context, error) => Center(
             child: Padding(
@@ -222,7 +234,7 @@ final class _RuntimeViewState extends State<_RuntimeView> {
                       onReset: game.resetTouchInput,
                     )
                   : null,
-              onCapture: game.requestMouseCapture,
+              onCapture: _captureInput,
               onPrimary: kIsWeb ? () {} : game.breakTargetBlock,
               onSecondary: kIsWeb ? () {} : game.placeSelectedBlock,
             ),

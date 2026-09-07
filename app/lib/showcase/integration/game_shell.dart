@@ -73,7 +73,12 @@ final class _GameShellState extends State<GameShell>
   ) {
     _runtime.game.setUiInputCaptured(captured);
     // Removing touch widgets drops their pointer IDs across modal routes.
-    if (mounted) setState(() {});
+    // ModalInputRegion can release ownership from dispose while the element
+    // tree is locked. The input gate above changes immediately; defer only UI.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() {});
+    });
+    WidgetsBinding.instance.ensureVisualUpdate();
   });
 
   BuildContext? get _navigatorContext => mounted ? context : null;
@@ -560,7 +565,7 @@ final class _GameShellState extends State<GameShell>
                   _options.bindingFor(GameInputAction.debugOverlay),
                 ): _runtime.game.hud.toggleDebug,
               },
-              child: Focus(autofocus: true, child: child!),
+              child: child!,
             ),
           ),
           MinimapOverlay(state: _minimap, compact: touchControls),

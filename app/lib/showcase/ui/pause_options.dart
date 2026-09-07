@@ -141,12 +141,11 @@ final class _PauseOptionsViewState extends State<PauseOptionsView> {
   }
 
   @override
-  Widget build(BuildContext context) => ModalInputRegion(
-    onInputCaptureChanged: widget.onInputCaptureChanged,
-    child: Focus(
-      focusNode: _keyboardFocus,
-      autofocus: true,
-      onKeyEvent: _onKeyEvent,
+  Widget build(BuildContext context) => Focus(
+    focusNode: _keyboardFocus,
+    onKeyEvent: _onKeyEvent,
+    child: ModalInputRegion(
+      onInputCaptureChanged: widget.onInputCaptureChanged,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < 700;
