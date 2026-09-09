@@ -63,32 +63,37 @@ class _HudOverlayState extends State<HudOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerDown: _handlePointerDown,
-          onPointerSignal: _handlePointerSignal,
-          onPointerPanZoomStart: _handlePanZoomStart,
-          onPointerPanZoomUpdate: _handlePanZoomUpdate,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              const Crosshair(),
-              IgnorePointer(
-                child: DebugOverlay(
-                  hud: widget.hud,
-                  frameMetrics: widget.frameMetrics,
+    // Scroll reaches the whole HUD, including opaque hotbar slots. Only the
+    // game surface handles mouse presses that capture the pointer or edit blocks.
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerSignal: _handlePointerSignal,
+      onPointerPanZoomStart: _handlePanZoomStart,
+      onPointerPanZoomUpdate: _handlePanZoomUpdate,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: _handlePointerDown,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const Crosshair(),
+                IgnorePointer(
+                  child: DebugOverlay(
+                    hud: widget.hud,
+                    frameMetrics: widget.frameMetrics,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-        ?widget.touchControls,
-        // A sibling hit target keeps hotbar clicks out of gameplay capture.
-        Hotbar(hud: widget.hud, touchControls: widget.touchControls != null),
-      ],
+          ?widget.touchControls,
+          // A sibling hit target keeps hotbar clicks out of gameplay capture.
+          Hotbar(hud: widget.hud, touchControls: widget.touchControls != null),
+        ],
+      ),
     );
   }
 
