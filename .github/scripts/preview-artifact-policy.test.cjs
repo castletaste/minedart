@@ -209,6 +209,36 @@ test('sanitizes the current static Flutter artifact shape', () => {
   });
 });
 
+test('accepts the flutter_scene preview variant under flutter-scene/', () => {
+  withArtifact(({source, destination}) => {
+    const variant = path.join(source, 'flutter-scene');
+    fs.mkdirSync(path.join(variant, 'assets'), {recursive: true});
+    for (const name of ['index.html', 'flutter_bootstrap.js', 'main.dart.wasm']) {
+      fs.writeFileSync(path.join(variant, name), 'variant');
+    }
+    fs.writeFileSync(path.join(variant, 'assets', 'AssetManifest.bin'), 'asset');
+    const result = sanitizeArtifact(source, destination);
+    assert.equal(result.fileCount, 13);
+    assert.equal(
+      fs.readFileSync(path.join(destination, 'flutter-scene', 'index.html'), 'utf8'),
+      'variant',
+    );
+  });
+
+  for (const unsafePath of [
+    'flutter-scene/_worker.js',
+    'flutter-scene/functions/handler.js',
+    'flutter-scene/wrangler.toml',
+  ]) {
+    withArtifact(({source, destination}) => {
+      const target = path.join(source, unsafePath);
+      fs.mkdirSync(path.dirname(target), {recursive: true});
+      fs.writeFileSync(target, 'unsafe');
+      assert.throws(() => sanitizeArtifact(source, destination), unsafePath);
+    });
+  }
+});
+
 test('rejects server code, tool config, unexpected roots, and symlinks', () => {
   const unsafePaths = [
     '_worker.js',
