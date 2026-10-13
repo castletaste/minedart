@@ -2,39 +2,73 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/showcase/integration/controls_hint_idle.dart';
 
 void main() {
-  test('movement hides the initial hint and six idle seconds restore it', () {
-    final state = ControlsHintIdleState();
-    expect(state.visible, isTrue);
-
-    expect(state.recordActivity(), isTrue);
-    expect(state.visible, isFalse);
-    expect(state.advance(const Duration(milliseconds: 5999)), isFalse);
-    expect(state.visible, isFalse);
-    expect(state.advance(const Duration(milliseconds: 1)), isTrue);
-    expect(state.visible, isTrue);
-  });
-
-  test('continued movement restarts the complete inactivity window', () {
-    final state = ControlsHintIdleState()..recordActivity();
-
-    state.advance(const Duration(seconds: 5));
-    expect(state.recordActivity(), isFalse);
-    expect(state.idleFor, Duration.zero);
-    expect(state.advance(const Duration(seconds: 5)), isFalse);
-    expect(state.advance(const Duration(seconds: 1)), isTrue);
-  });
-
-  test('reset restores startup state and negative time is rejected', () {
-    final state = ControlsHintIdleState()
-      ..recordActivity()
-      ..advance(const Duration(seconds: 2))
-      ..reset();
-
-    expect(state.visible, isTrue);
-    expect(state.idleFor, Duration.zero);
-    expect(
-      () => state.advance(const Duration(microseconds: -1)),
-      throwsArgumentError,
+  testWidgets('only the last activity starts the six-second idle window', (
+    tester,
+  ) async {
+    final start = tester.binding.clock.now();
+    var changes = 0;
+    final hint = ControlsHintIdleController(
+      elapsed: () => tester.binding.clock.now().difference(start),
+      onChanged: () => changes++,
     );
+    addTearDown(hint.dispose);
+    expect(hint.visible, isTrue);
+    hint.recordActivity();
+    await tester.pump(const Duration(seconds: 5));
+    hint.recordActivity();
+    await tester.pump(const Duration(seconds: 5));
+    expect(hint.visible, isFalse);
+    await tester.pump(const Duration(seconds: 1));
+    expect(hint.visible, isTrue);
+    expect(changes, 2);
   });
+
+  testWidgets('modal and background time preserve the remaining idle window', (
+    tester,
+  ) async {
+    final start = tester.binding.clock.now();
+    final hint = ControlsHintIdleController(
+      elapsed: () => tester.binding.clock.now().difference(start),
+      onChanged: () {},
+    );
+    addTearDown(hint.dispose);
+    hint.recordActivity();
+    await tester.pump(const Duration(seconds: 2));
+    hint.setActive(false);
+    await tester.pump(const Duration(minutes: 2));
+    expect(hint.visible, isFalse);
+    hint.setActive(true);
+    await tester.pump(const Duration(seconds: 3));
+    expect(hint.visible, isFalse);
+    await tester.pump(const Duration(seconds: 1));
+    expect(hint.visible, isTrue);
+  });
+
+  testWidgets(
+    'activity while paused resets idle time; reset/dispose cancel work',
+    (tester) async {
+      final start = tester.binding.clock.now();
+      var changes = 0;
+      final hint = ControlsHintIdleController(
+        elapsed: () => tester.binding.clock.now().difference(start),
+        onChanged: () => changes++,
+      );
+      hint.recordActivity();
+      await tester.pump(const Duration(seconds: 4));
+      hint.setActive(false);
+      hint.recordActivity();
+      hint.setActive(true);
+      await tester.pump(const Duration(seconds: 5));
+      expect(hint.visible, isFalse);
+      hint.reset();
+      expect(hint.visible, isTrue);
+      hint.recordActivity();
+      hint.dispose();
+      final before = changes;
+      await tester.pump(const Duration(seconds: 10));
+      hint.recordActivity();
+      hint.setActive(true);
+      expect(changes, before);
+    },
+  );
 }

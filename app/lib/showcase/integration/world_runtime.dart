@@ -8,6 +8,7 @@ import '../../data/worlds/world_repository.dart';
 import '../../game/minedart_game.dart';
 import '../../pipeline/mesh_pipeline.dart';
 import 'repository_autosaver.dart';
+import 'cleanup_errors.dart';
 import 'world_session_coordinator.dart';
 
 typedef RuntimeGameFactory =
@@ -63,6 +64,12 @@ final class WorldRuntime implements WorldSessionRuntime {
         repository: repository,
         world: world,
         metadata: document.metadata,
+        onError: (_, _) {
+          createdGame.diagnostics.updateState(
+            storageReady: false,
+            sessionFaulted: true,
+          );
+        },
         readSpawn: () => WorldSpawn(
           x: createdGame.spawnFeet.x,
           y: createdGame.spawnFeet.y,
@@ -80,7 +87,7 @@ final class WorldRuntime implements WorldSessionRuntime {
         input: service,
       );
     } catch (error) {
-      final failures = <Object>[];
+      final failures = CleanupErrors();
       try {
         game?.disposeSessionResources();
         await game?.meshCleanup;
@@ -99,8 +106,8 @@ final class WorldRuntime implements WorldSessionRuntime {
           failures.add(failure);
         }
       }
-      if (failures.isNotEmpty) {
-        throw WorldSessionFailure<void>(error, cleanupErrors: failures);
+      if (!failures.isEmpty) {
+        throw WorldSessionException(error, cleanupErrors: failures.values);
       }
       rethrow;
     }
@@ -125,7 +132,19 @@ final class WorldRuntime implements WorldSessionRuntime {
       _completeWithCleanup(game.quiesceSession, autosaver.stopAndWait);
 
   @override
-  Future<void> save() => autosaver.saveNow();
+  Future<void> save() async {
+    final stopwatch = Stopwatch()..start();
+    try {
+      await autosaver.saveNow();
+      game.diagnostics.updateState(storageReady: true);
+    } catch (_) {
+      game.diagnostics.updateState(storageReady: false, sessionFaulted: true);
+      rethrow;
+    } finally {
+      stopwatch.stop();
+      game.diagnostics.recordPersistence(stopwatch.elapsedMicroseconds / 1000);
+    }
+  }
 
   @override
   void resume() {
@@ -143,7 +162,7 @@ final class WorldRuntime implements WorldSessionRuntime {
   Future<void> release() => _releaseTask ??= _release();
 
   Future<void> _release() async {
-    final errors = <Object>[];
+    final errors = CleanupErrors();
     try {
       await autosaver.stopAndWait();
     } catch (error) {
@@ -160,12 +179,9 @@ final class WorldRuntime implements WorldSessionRuntime {
     } catch (error) {
       errors.add(error);
     }
-    if (errors.isNotEmpty) {
+    if (!errors.isEmpty) {
       _releaseTask = null;
-      throw WorldSessionFailure<void>(
-        errors.first,
-        cleanupErrors: errors.skip(1).toList(),
-      );
+      throw WorldSessionException(errors.first, cleanupErrors: errors.rest);
     }
   }
 
@@ -179,30 +195,7 @@ final class WorldRuntime implements WorldSessionRuntime {
 Future<void> _completeWithCleanup(
   Future<void> Function() operation,
   Future<void> Function() cleanup,
-) async {
-  try {
-    await operation();
-  } catch (error) {
-    try {
-      await cleanup();
-    } catch (cleanupError) {
-      final primary = error is WorldSessionFailure ? error.error : error;
-      throw WorldSessionFailure<void>(
-        primary,
-        cleanupErrors: [
-          if (error is WorldSessionFailure) ...error.cleanupErrors,
-          if (cleanupError is WorldSessionFailure) ...[
-            cleanupError.error,
-            ...cleanupError.cleanupErrors,
-          ] else
-            cleanupError,
-        ],
-      );
-    }
-    rethrow;
-  }
-  await cleanup();
-}
+) => runWithCleanup(operation, cleanup);
 
 bool validWorldSpawn(WorldSpawn spawn) =>
     spawn.x >= 0 &&

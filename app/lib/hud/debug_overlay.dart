@@ -1,19 +1,26 @@
 /// Top-left debug readout (F3): fps EMA, player position, selected block.
 library;
 
-import 'dart:typed_data';
-
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../performance/performance_snapshot.dart';
+import '../diagnostics/diagnostics_snapshot.dart';
+import '../showcase/ui/developer_health_panel.dart';
 import '../showcase/render/frame_metrics.dart';
 import 'hud_state.dart';
 
 class DebugOverlay extends StatelessWidget {
-  const DebugOverlay({required this.hud, this.frameMetrics, super.key});
+  const DebugOverlay({
+    required this.hud,
+    this.frameMetrics,
+    this.diagnostics,
+    super.key,
+  });
 
   final HudState hud;
   final FrameMetrics? frameMetrics;
+  final ValueListenable<DiagnosticsSnapshot>? diagnostics;
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +59,14 @@ class DebugOverlay extends StatelessWidget {
                         ..._frameMetricWidgets(
                           metrics,
                           includeLegacySummary: stats.performance == null,
+                        ),
+                      if (diagnostics case final health?)
+                        ValueListenableBuilder<DiagnosticsSnapshot>(
+                          valueListenable: health,
+                          builder: (context, snapshot, _) => Padding(
+                            padding: const EdgeInsets.only(top: 6),
+                            child: DeveloperHealthPanel(snapshot: snapshot),
+                          ),
                         ),
                     ],
                   ),

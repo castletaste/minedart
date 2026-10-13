@@ -48,8 +48,7 @@ final class ChunkMeshCoordinator {
   /// A completed request remains in the map so a late result cannot restart an
   /// old generation, while [requested] says whether the chunk is still owned
   /// by the current view.
-  final Map<int, _ChunkRequestState> _requests =
-      <int, _ChunkRequestState>{};
+  final Map<int, _ChunkRequestState> _requests = <int, _ChunkRequestState>{};
   final MeshRequestQueue _pendingCaptures = MeshRequestQueue(maxRetries: 1);
   final Stopwatch _captureStopwatch = Stopwatch();
   final Stopwatch _applyStopwatch = Stopwatch();
