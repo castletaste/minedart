@@ -5,7 +5,16 @@ script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 app_dir="$(cd -- "${script_dir}/.." && pwd)"
 cd "${app_dir}"
 
-flutter build web --wasm --release --no-web-resources-cdn
+if command -v flutter >/dev/null 2>&1; then
+  flutter_cmd=(flutter)
+elif command -v fvm >/dev/null 2>&1; then
+  flutter_cmd=(fvm flutter)
+else
+  echo "Neither flutter nor fvm is available on PATH." >&2
+  exit 1
+fi
+
+"${flutter_cmd[@]}" build web --wasm --release --no-web-resources-cdn
 
 # Flutter does not guarantee that dotfiles from web/ are copied to build/web.
 cp web/_headers build/web/_headers
