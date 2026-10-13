@@ -2,7 +2,7 @@ material {
   name: "VoxelTranslucent",
   shading_model: unlit,
   blending: alpha,
-  culling: back,
+  culling: none,
   depth_write: false,
   parameters: [
     { type: vec4, name: fog_color, default: [0.5098, 0.7843, 1.0, 1.0] },

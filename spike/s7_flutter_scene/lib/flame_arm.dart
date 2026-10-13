@@ -1,6 +1,7 @@
 // Control arm: the same static scene rendered through the production
 // flame_3d path (PackedSurface + VoxelMaterial/WebVoxelMaterial), with the
 // same FrameProbe output. Build with `-t lib/flame_arm.dart`.
+import 'dart:typed_data';
 
 import 'package:flame/game.dart';
 import 'package:flame_3d/camera.dart';
@@ -15,7 +16,8 @@ import 'package:minedart_core/minedart_core.dart';
 
 import 'flame_arm/packed_surface.dart';
 import 'flame_arm/voxel_material.dart';
-import 'main.dart' show kRenderDistance, kSeed, kSkyColor, kWarmUpMs;
+import 'main.dart'
+    show kChurnPerFrame, kRenderDistance, kSeed, kSkyColor, kWarmUpMs;
 import 'src/frame_probe.dart';
 import 'src/spawn.dart';
 
@@ -43,6 +45,9 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
   double _sinceStartMs = 0;
   bool _warm = false;
   bool _ready = false;
+  late final Material _material;
+  final List<_FlamePass> _passes = [];
+  int _churnCursor = 0;
 
   @override
   Color backgroundColor() => kSkyColor;
@@ -62,6 +67,7 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
       material = VoxelMaterial(albedoTexture: atlas)
         ..setFogRange(fog.$1, fog.$2);
     }
+    _material = material;
     final setupMs = total.elapsedMicroseconds / 1000;
 
     final voxelWorld = VoxelWorld();
@@ -97,21 +103,13 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
             meshBytes += vertices.lengthInBytes + indices.lengthInBytes;
             final one = Stopwatch()..start();
             uploadWatch.start();
-            final mesh = Mesh()
-              ..addSurface(
-                PackedSurface(
-                  vertices: vertices,
-                  indices: indices,
-                  material: material,
-                  aabb: Aabb3.minMax(Vector3.zero(), Vector3.all(extent)),
-                ),
-              );
-            world.add(
-              MeshComponent(
-                mesh: mesh,
-                position: Vector3(cx * extent, cy * extent, cz * extent),
-              ),
+            final pass = _FlamePass(
+              vertices,
+              indices,
+              Vector3(cx * extent, cy * extent, cz * extent),
             );
+            world.add(pass.component = _component(pass));
+            _passes.add(pass);
             uploadWatch.stop();
             uploadSamples.add(one.elapsedMicroseconds / 1000);
             passes++;
@@ -144,6 +142,7 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
     _updateWatch
       ..reset()
       ..start();
+    if (_warm && kChurnPerFrame > 0) _churn();
     super.update(dt);
     _updateWatch.stop();
     _lastUpdateMs = _updateWatch.elapsedMicroseconds / 1000;
@@ -166,6 +165,30 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
       );
   }
 
+  MeshComponent _component(_FlamePass pass) {
+    final extent = WorldDims.chunkSize.toDouble();
+    final mesh = Mesh()
+      ..addSurface(
+        PackedSurface(
+          vertices: pass.vertices,
+          indices: pass.indices,
+          material: _material,
+          aabb: Aabb3.minMax(Vector3.zero(), Vector3.all(extent)),
+        ),
+      );
+    return MeshComponent(mesh: mesh, position: pass.position.clone());
+  }
+
+  /// Production remesh shape: drop the component, add a fresh PackedSurface.
+  void _churn() {
+    for (var i = 0; i < kChurnPerFrame; i++) {
+      final pass = _passes[_churnCursor];
+      _churnCursor = (_churnCursor + 1) % _passes.length;
+      pass.component.removeFromParent();
+      world.add(pass.component = _component(pass));
+    }
+  }
+
   @override
   void render(Canvas canvas) {
     _renderWatch
@@ -175,4 +198,13 @@ final class FlameArmGame extends FlameGame3D<World3D, CameraComponent3D> {
     _renderWatch.stop();
     _lastRenderMs = _renderWatch.elapsedMicroseconds / 1000;
   }
+}
+
+final class _FlamePass {
+  _FlamePass(this.vertices, this.indices, this.position);
+
+  final Float32List vertices;
+  final Uint16List indices;
+  final Vector3 position;
+  late MeshComponent component;
 }

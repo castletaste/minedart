@@ -2,7 +2,7 @@ material {
   name: "VoxelOpaque",
   shading_model: unlit,
   blending: opaque,
-  culling: back,
+  culling: none,
   depth_write: true,
   parameters: [
     { type: vec4, name: fog_color, default: [0.5098, 0.7843, 1.0, 1.0] },
