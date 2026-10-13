@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' show Canvas, Size;
 
 import 'package:flame/cache.dart' show Images;
 import 'package:flame_3d/camera.dart';
@@ -108,6 +109,14 @@ final class Flame3dVoxelRenderer implements VoxelRenderer {
 
   @override
   final RenderFrameCounters frameCounters;
+
+  /// Particles update as Flame components.
+  @override
+  void update(double dt) {}
+
+  /// The world draws through the host's `FlameGame3D` component tree.
+  @override
+  void render(Canvas canvas, Size size) {}
 
   /// Adds the ambient light, outline and particle pool to the scene.
   void attach() {

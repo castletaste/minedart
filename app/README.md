@@ -24,6 +24,21 @@ fvm flutter run -d macos --dart-define=MINEDART_ATLAS=legacy
 The only accepted values are `alpha` and `legacy`; invalid values fail before
 the texture asset is loaded and never fall back silently.
 
+The renderer is flame_3d (WebGPU on web) by default. An experimental
+flutter_scene renderer (WebGL2 on web, so it also runs in Safari and Firefox)
+is compiled in with:
+
+```sh
+fvm flutter run -d chrome --dart-define=MINEDART_RENDERER=flutter_scene
+fvm flutter run -d macos --dart-define=MINEDART_RENDERER=flutter_scene
+bash tool/build_web_release.sh --dart-define=MINEDART_RENDERER=flutter_scene
+```
+
+The accepted values are `flame_3d` and `flutter_scene`; invalid values fail
+before GPU startup. The flutter_scene materials in `assets/materials/` are
+compiled by `hook/build.dart` into `flutter_scene_generated/` on every build.
+Known gaps are tracked in `spike/s7_flutter_scene/REPORT.md`.
+
 Main controls:
 
 - WASD + Space: move and jump; double-tap and hold W to sprint.

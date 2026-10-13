@@ -14,7 +14,9 @@ else
   exit 1
 fi
 
-"${flutter_cmd[@]}" build web --wasm --release --no-web-resources-cdn
+# Extra arguments (for example --dart-define=MINEDART_RENDERER=flutter_scene)
+# are passed through to flutter build.
+"${flutter_cmd[@]}" build web --wasm --release --no-web-resources-cdn "$@"
 
 # Flutter does not guarantee that dotfiles from web/ are copied to build/web.
 cp web/_headers build/web/_headers

@@ -5,8 +5,7 @@ import 'package:minedart_core/minedart_core.dart' show VoxelWorld;
 
 import '../../audio/audio.dart';
 import '../../data/worlds/worlds.dart';
-import '../../render/flame3d/flame3d_voxel_renderer.dart'
-    show initializeFlame3dGpu;
+import '../../render/renderer_startup.dart';
 import '../../render/voxel_renderer.dart';
 import 'launch_config.dart';
 import 'legacy_world_migration.dart';
@@ -46,7 +45,7 @@ final class ShowcaseBootstrapLoader {
     WorldRuntimeFactory? createRuntime,
     Uri Function()? launchUri,
     LegacyWorldReader? readLegacy,
-  }) : _initializeGpu = initializeGpu ?? initializeFlame3dGpu,
+  }) : _initializeGpu = initializeGpu ?? initializeSelectedRenderer,
        _createRepository = createRepository ?? createDefaultWorldRepository,
        _createAudio = createAudio ?? (() => AudioService.create(maxPlayers: 4)),
        _createRuntime = createRuntime ?? WorldRuntime.create,
@@ -305,7 +304,7 @@ _StartupFailureMessage _startupFailureMessage(Object error) {
   return switch (error.kind) {
     RendererInitializationFailureKind.apiUnavailable =>
       const _StartupFailureMessage(
-        'WebGPU is unavailable',
+        '$kSelectedRendererApiName is unavailable',
         'Update your browser and make sure hardware acceleration is enabled.',
       ),
     RendererInitializationFailureKind.adapterUnavailable =>

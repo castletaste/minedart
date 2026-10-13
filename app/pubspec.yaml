@@ -12,6 +12,11 @@ dependencies:
   flame: ^1.38.0
   flame_3d:
     path: ../third_party/flame_3d
+  # Experimental second renderer, compiled in with
+  # --dart-define=MINEDART_RENDERER=flutter_scene. Pinned exactly: minor
+  # releases still break geometry and material APIs.
+  flutter_scene: 0.24.3
+  hooks: ^2.0.0
   minedart_core:
     path: ../packages/core
   vector_math: ^2.1.4
@@ -32,3 +37,14 @@ flutter:
     - assets/shaders/
     - assets/textures/
     - assets/audio/
+    # flutter_scene renderer: .fmat materials compiled by hook/build.dart.
+    # Bundled in every build; only MINEDART_RENDERER=flutter_scene loads them.
+    - flutter_scene_generated/
+    - path: flutter_scene_generated/metal_ios/
+      platforms: [ios]
+    - path: flutter_scene_generated/metal_desktop/
+      platforms: [macos]
+    - path: flutter_scene_generated/opengl_es_vulkan/
+      platforms: [android, linux, windows]
+    - path: flutter_scene_generated/opengl_es/
+      platforms: [web]

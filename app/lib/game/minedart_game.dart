@@ -1,7 +1,9 @@
 import 'dart:async';
-import 'dart:ui' show Canvas;
+import 'dart:ui' show Canvas, Size;
 
 import 'package:flame/events.dart';
+import 'package:flame/components.dart' show World;
+import 'package:flame/game.dart' show FlameGame;
 // Flame host binding: the game loop, lifecycle and input come from Flame;
 // all rendering goes through the engine-neutral [VoxelRenderer] port.
 import 'package:flame_3d/camera.dart' show FirstPersonCamera, World3D;
@@ -26,6 +28,8 @@ import '../pipeline/mesh_pipeline.dart';
 import '../performance/performance.dart';
 import '../render/chunk_render_manager.dart';
 import '../render/flame3d/flame3d_voxel_renderer.dart';
+import '../render/flutter_scene/scene_voxel_renderer.dart';
+import '../render/renderer_selection.dart';
 import '../render/voxel_renderer.dart';
 import '../showcase/render/showcase_render.dart';
 import 'chunk_mesh_coordinator.dart';
@@ -35,9 +39,12 @@ import 'world_effects.dart';
 import 'world_interaction_controller.dart';
 
 /// First-person MVP shell with native relative mouse look and voxel physics.
-final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
-    with KeyboardEvents, TapCallbacks {
-  factory MinedartGame({
+///
+/// The renderer-independent core shared by the Flame hosts at the end of this
+/// file. [create] picks the host for the compile-time renderer.
+mixin MinedartGame<W extends World>
+    on FlameGame<W>, KeyboardEvents, TapCallbacks {
+  static MinedartGame create({
     required VoxelWorld world,
     required MeshPipelineBase pipeline,
     GameInputService? input,
@@ -61,36 +68,40 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       initialYaw: initialYaw,
       initialPitch: initialPitch,
     );
-    return MinedartGame._(
-      world,
-      pipeline,
-      audio,
-      player,
-      input ?? GameInputService(),
-      input == null,
+    final setup = _MinedartGameSetup(
+      world: world,
+      pipeline: pipeline,
+      audio: audio,
+      player: player,
+      input: input ?? GameInputService(),
+      ownsInput: input == null,
     );
+    return kUsesFlutterScene
+        ? _FlutterSceneMinedartGame(setup)
+        : _Flame3dMinedartGame(setup);
   }
 
-  MinedartGame._(
-    this.voxelWorld,
-    this.pipeline,
-    this.audio,
-    this._player,
-    this.input,
-    this._ownsInput,
-  ) : super(
-        camera: FirstPersonCamera(
-          following: _player.eyePosition,
-          fovY: basePlayerFov,
-          position: _player.eyePosition,
-        ),
-      ) {
+  /// Called once from each host constructor.
+  void _initializeMinedart(_MinedartGameSetup setup) {
+    voxelWorld = setup.world;
+    pipeline = setup.pipeline;
+    audio = setup.audio;
+    _player = setup.player;
+    input = setup.input;
+    _ownsInput = setup.ownsInput;
     _player.onFootstep = (blockId, seed) => _playAudio(
       AudioCue.forBlock(blockId, BlockAudioAction.step),
       seed: seed,
     );
     diagnostics = DiagnosticsCollector();
   }
+
+  /// Host-owned first-person camera controls; usable before [onLoad].
+  RenderCameraControls get _cameraControls;
+
+  /// Loads the host's renderer. A host torn down while loading must not
+  /// attach anything to its scene.
+  Future<VoxelRenderer> _loadRenderer();
 
   static const _skyColor = Color(0xFF82C8FF);
   static const defaultMouseSensitivity =
@@ -104,10 +115,10 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     defaultValue: 250,
   );
 
-  final VoxelWorld voxelWorld;
-  final MeshPipelineBase pipeline;
-  final AudioServiceApi audio;
-  final PlayerMotionController _player;
+  late final VoxelWorld voxelWorld;
+  late final MeshPipelineBase pipeline;
+  late final AudioServiceApi audio;
+  late final PlayerMotionController _player;
   late final WorldInteractionController _interaction =
       WorldInteractionController(
         world: voxelWorld,
@@ -135,8 +146,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       );
   EditHistory get editHistory => _interaction.editHistory;
   WorldTickEngine get worldTicks => _interaction.worldTicks;
-  final GameInputService input;
-  final bool _ownsInput;
+  late final GameInputService input;
+  late final bool _ownsInput;
   late final GameInputClient _inputClient = input.createClient(_onMouseEvent);
   final Completer<Object?> _ready = Completer<Object?>();
   final Completer<void> _removed = Completer<void>();
@@ -185,9 +196,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   late final VoxelRenderer renderer;
   late final ChunkRenderManager chunks;
-  late final Flame3dCameraControls _cameraControls = Flame3dCameraControls(
-    camera,
-  );
   RenderLabBridge? _renderLab;
   RenderLabBridge get renderLab => _renderLab!;
   final FrameMetrics frameMetrics = FrameMetrics(
@@ -379,13 +387,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       await super.onLoad();
       if (_terminal) return;
       _cameraControls.setOrientation(_player.yaw, _player.pitch);
-      images.prefix = 'assets/';
-      final renderer = await Flame3dVoxelRenderer.load(
-        world: world,
-        camera: _cameraControls,
-        images: images,
-        atlasAssetPath: selectedAtlas.assetPath,
-      );
+      final renderer = await _loadRenderer();
       if (_terminal) return;
       this.renderer = renderer;
       chunks = ChunkRenderManager(
@@ -400,7 +402,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         camera: renderer.camera,
         frameMetrics: frameMetrics,
       );
-      renderer.attach();
 
       _meshes = ChunkMeshCoordinator(
         world: voxelWorld,
@@ -658,6 +659,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         sprinting: isSprinting,
       );
       _updateTargetOutline();
+      renderer.update(dt);
       super.update(dt);
       if (telemetry.pendingMainThreadMeshMs > 0) {
         telemetry.consumeMainThreadMesh();
@@ -691,6 +693,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     telemetry.startTiming(PerformanceMetric.cpuRender);
     try {
       super.render(canvas);
+      renderer.render(canvas, Size(size.x, size.y));
     } finally {
       telemetry.stopAndRecordTiming(PerformanceMetric.cpuRender);
     }
@@ -827,6 +830,80 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _player.respawnAtSavedPoint();
     hud.recordAction('teleported');
   }
+}
+
+final class _MinedartGameSetup {
+  const _MinedartGameSetup({
+    required this.world,
+    required this.pipeline,
+    required this.audio,
+    required this.player,
+    required this.input,
+    required this.ownsInput,
+  });
+
+  final VoxelWorld world;
+  final MeshPipelineBase pipeline;
+  final AudioServiceApi audio;
+  final PlayerMotionController player;
+  final GameInputService input;
+  final bool ownsInput;
+}
+
+/// flame_3d host, the production renderer: `FlameGame3D` draws the world
+/// through its component tree.
+final class _Flame3dMinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
+    with KeyboardEvents, TapCallbacks, MinedartGame<World3D> {
+  _Flame3dMinedartGame(_MinedartGameSetup setup)
+    : super(
+        camera: FirstPersonCamera(
+          following: setup.player.eyePosition,
+          fovY: basePlayerFov,
+          position: setup.player.eyePosition,
+        ),
+      ) {
+    _initializeMinedart(setup);
+  }
+
+  @override
+  late final Flame3dCameraControls _cameraControls = Flame3dCameraControls(
+    camera,
+  );
+
+  @override
+  Future<VoxelRenderer> _loadRenderer() async {
+    images.prefix = 'assets/';
+    final renderer = await Flame3dVoxelRenderer.load(
+      world: world,
+      camera: _cameraControls,
+      images: images,
+      atlasAssetPath: selectedAtlas.assetPath,
+    );
+    if (!_terminal) renderer.attach();
+    return renderer;
+  }
+}
+
+/// Experimental flutter_scene host (`MINEDART_RENDERER=flutter_scene`): a
+/// plain Flame game whose renderer draws the 3D scene into the game canvas.
+final class _FlutterSceneMinedartGame extends FlameGame
+    with KeyboardEvents, TapCallbacks, MinedartGame<World> {
+  _FlutterSceneMinedartGame(_MinedartGameSetup setup)
+    : _cameraControls = SceneCameraControls(
+        eye: setup.player.eyePosition,
+        fovY: basePlayerFov,
+      ) {
+    _initializeMinedart(setup);
+  }
+
+  @override
+  final SceneCameraControls _cameraControls;
+
+  @override
+  Future<VoxelRenderer> _loadRenderer() => SceneVoxelRenderer.load(
+    camera: _cameraControls,
+    atlasAssetPath: selectedAtlas.assetPath,
+  );
 }
 
 enum _WorldInteractionSource { capturedPointer, touchControls }

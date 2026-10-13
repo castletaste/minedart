@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:ui' show Canvas, Size;
 
 import 'package:vector_math/vector_math.dart';
 
@@ -19,6 +20,15 @@ abstract interface class VoxelRenderer {
 
   /// Counters from the most recently completed frame.
   RenderFrameCounters get frameCounters;
+
+  /// Advances renderer-side simulation (particles) once per game update.
+  /// Renderers whose effects live in the host's component tree do nothing.
+  void update(double dt);
+
+  /// Draws the scene into the host canvas, after the host's own component
+  /// tree, at the logical [size]. Renderers that draw through the host's
+  /// components do nothing.
+  void render(Canvas canvas, Size size);
 }
 
 /// The two mesh passes a chunk can have.
