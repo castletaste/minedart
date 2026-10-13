@@ -3,7 +3,8 @@ import 'dart:ui';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/resources.dart';
 
-import '../../render/packed_surface.dart';
+import '../voxel_renderer.dart' show TargetOutlineControls;
+import 'packed_surface.dart';
 import 'packed_primitives.dart';
 
 /// A reusable one-slot target-outline pool for flame_3d 0.3.0.
@@ -11,7 +12,8 @@ import 'packed_primitives.dart';
 /// The 12 edge cuboids and their [PackedSurface] are built once. Target changes
 /// only mutate the retained component's transform, so raycast updates never
 /// allocate meshes or vertex objects.
-final class TargetOutline extends MeshComponent {
+final class TargetOutline extends MeshComponent
+    implements TargetOutlineControls {
   factory TargetOutline({
     Material? material,
     Color color = const Color(0xFF111111),
@@ -58,6 +60,7 @@ final class TargetOutline extends MeshComponent {
   final Color color;
   final Color highContrastColor;
 
+  @override
   bool enabled = true;
   bool _hasTarget = false;
   bool _highContrast = false;
@@ -66,6 +69,7 @@ final class TargetOutline extends MeshComponent {
   int _targetZ = 0;
 
   bool get hasTarget => _hasTarget;
+  @override
   bool get isShown => enabled && _hasTarget;
   bool get highContrast => _highContrast;
   int get targetX => _targetX;
@@ -75,6 +79,7 @@ final class TargetOutline extends MeshComponent {
   /// This remains one for the entire component lifetime.
   int get meshAllocationCount => 1;
 
+  @override
   void showAt(int x, int y, int z) {
     _targetX = x;
     _targetY = y;
@@ -85,6 +90,7 @@ final class TargetOutline extends MeshComponent {
 
   void updateTarget(int x, int y, int z) => showAt(x, y, z);
 
+  @override
   void hide() {
     _hasTarget = false;
   }
@@ -92,6 +98,7 @@ final class TargetOutline extends MeshComponent {
   void clearTarget() => hide();
 
   /// Updates the retained unlit material; no shader/material is recreated.
+  @override
   void setHighContrast(bool value) {
     if (_highContrast == value) return;
     _highContrast = value;

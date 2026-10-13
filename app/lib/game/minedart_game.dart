@@ -2,15 +2,16 @@ import 'dart:async';
 import 'dart:ui' show Canvas;
 
 import 'package:flame/events.dart';
-import 'package:flame_3d/camera.dart';
-import 'package:flame_3d/components.dart';
-import 'package:flame_3d/game.dart';
-import 'package:flame_3d/resources.dart';
+// Flame host binding: the game loop, lifecycle and input come from Flame;
+// all rendering goes through the engine-neutral [VoxelRenderer] port.
+import 'package:flame_3d/camera.dart' show FirstPersonCamera, World3D;
+import 'package:flame_3d/game.dart' show FlameGame3D;
 import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' show KeyEventResult, MediaQuery;
 import 'package:minedart_core/minedart_core.dart';
+import 'package:vector_math/vector_math.dart' show Vector3;
 
 import '../assets/atlas_selection.dart';
 import '../audio/audio.dart';
@@ -24,7 +25,8 @@ import '../hud/hud_state.dart';
 import '../pipeline/mesh_pipeline.dart';
 import '../performance/performance.dart';
 import '../render/chunk_render_manager.dart';
-import '../render/voxel_material.dart';
+import '../render/flame3d/flame3d_voxel_renderer.dart';
+import '../render/voxel_renderer.dart';
 import '../showcase/render/showcase_render.dart';
 import 'chunk_mesh_coordinator.dart';
 import 'game_host_port.dart';
@@ -120,7 +122,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
                 required z,
                 count = 8,
               }) {
-                particlePool.emitBlock(
+                renderer.particles.emitBlock(
                   blockId: blockId,
                   x: x,
                   y: y,
@@ -181,10 +183,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _player.setMouseOptions(sensitivity: sensitivity, invertY: invertY);
   }
 
+  late final VoxelRenderer renderer;
   late final ChunkRenderManager chunks;
-  late final VoxelMaterialControls voxelMaterial;
-  late final TargetOutline targetOutline;
-  late final BlockParticlePool particlePool;
+  late final Flame3dCameraControls _cameraControls = Flame3dCameraControls(
+    camera,
+  );
   RenderLabBridge? _renderLab;
   RenderLabBridge get renderLab => _renderLab!;
   final FrameMetrics frameMetrics = FrameMetrics(
@@ -221,7 +224,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     required double fogDensity,
     required bool ambientOcclusion,
   }) {
-    voxelMaterial.setRenderStyle(
+    renderer.material.setRenderStyle(
       debugView: debugView,
       fogDensity: fogDensity,
       ambientOcclusion: ambientOcclusion,
@@ -302,10 +305,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       !simulationPaused &&
       !paused;
 
-  /// Look direction derived from the camera rotation quaternion.
-  Vector3 get lookDirection => _lookDirection
-    ..setValues(0, 0, -1)
-    ..applyQuaternion(camera.rotation);
+  /// Look direction derived from the camera orientation.
+  Vector3 get lookDirection =>
+      _cameraControls.lookDirectionInto(_lookDirection);
 
   /// Block edits are gated on pointer capture so the click that grabs the
   /// mouse does not also break a block. Platforms without the native bridge
@@ -376,47 +378,29 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     try {
       await super.onLoad();
       if (_terminal) return;
-      camera
-        ..resetRotation()
-        ..rotate(_player.yaw, _player.pitch);
+      _cameraControls.setOrientation(_player.yaw, _player.pitch);
       images.prefix = 'assets/';
-      final atlas = await images.loadTexture(selectedAtlas.assetPath);
-      if (_terminal) return;
-      // Web uses a compact WGSL cutout material; macOS keeps fog support.
-      final Material material;
-      if (kIsWeb) {
-        final webMaterial = WebVoxelMaterial(albedoTexture: atlas);
-        voxelMaterial = webMaterial;
-        material = webMaterial;
-      } else {
-        final nativeMaterial = VoxelMaterial(albedoTexture: atlas);
-        voxelMaterial = nativeMaterial;
-        material = nativeMaterial;
-      }
-      chunks = ChunkRenderManager(
+      final renderer = await Flame3dVoxelRenderer.load(
         world: world,
-        material: material,
+        camera: _cameraControls,
+        images: images,
+        atlasAssetPath: selectedAtlas.assetPath,
+      );
+      if (_terminal) return;
+      this.renderer = renderer;
+      chunks = ChunkRenderManager(
+        passes: renderer.chunkPasses,
         resourceBudget: diagnostics.budget,
       );
-
-      targetOutline = TargetOutline()..hide();
-      particlePool = BlockParticlePool();
       _renderLab = RenderLabBridge(
-        capabilities: kIsWeb
-            ? RenderCapabilities.web
-            : RenderCapabilities.native,
-        fogTarget: VoxelMaterialFogTarget(voxelMaterial),
-        targetOutline: targetOutline,
-        particlePool: particlePool,
-        camera: camera,
+        capabilities: renderer.capabilities,
+        fogTarget: VoxelMaterialFogTarget(renderer.material),
+        targetOutline: renderer.targetOutline,
+        particlePool: renderer.particles,
+        camera: renderer.camera,
         frameMetrics: frameMetrics,
       );
-
-      world.addAll([
-        LightComponent.ambient(intensity: 1.0),
-        targetOutline,
-        particlePool,
-      ]);
+      renderer.attach();
 
       _meshes = ChunkMeshCoordinator(
         world: voxelWorld,
@@ -642,9 +626,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       _meshes?.drainPendingCaptures();
       if (_player.updateLook(dt, touch)) {
         _reportMovementActivity();
-        camera
-          ..resetRotation()
-          ..rotate(_player.yaw, _player.pitch);
+        _cameraControls.setOrientation(_player.yaw, _player.pitch);
       }
       _applyTouchActions(touch);
       if (!simulationPaused) {
@@ -656,8 +638,8 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         }
         _interaction.advance(dt);
       }
-      camera.fovY = stepSprintFov(
-        current: camera.fovY,
+      _cameraControls.fovY = stepSprintFov(
+        current: _cameraControls.fovY,
         sprinting: isSprinting,
         reducedMotion: renderLab.settings.reducedMotion,
         dt: dt,
@@ -720,19 +702,19 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     final devicePixelRatio = context == null
         ? 0.0
         : MediaQuery.devicePixelRatioOf(context);
-    final cache = world.context.device.lastBindCacheCounters;
+    final counters = renderer.frameCounters;
     frameMetrics.updateSnapshotFields(
-      drawCount: world.context.drawCount,
+      drawCount: counters.drawCount,
       meshQueue: _meshQueueCount,
       devicePixelRatio: devicePixelRatio,
       effectiveTargetWidth: (size.x * devicePixelRatio).toInt(),
       effectiveTargetHeight: (size.y * devicePixelRatio).toInt(),
       retainedComponentCount: chunks.retainedComponentCount,
       retainedMeshBytes: chunks.retainedMeshBytes,
-      uniformUploadHits: cache?.uniformUploadHits ?? 0,
-      uniformUploadMisses: cache?.uniformUploadMisses ?? 0,
-      bindGroupHits: cache?.bindGroupHits ?? 0,
-      bindGroupMisses: cache?.bindGroupMisses ?? 0,
+      uniformUploadHits: counters.uniformUploadHits ?? 0,
+      uniformUploadMisses: counters.uniformUploadMisses ?? 0,
+      bindGroupHits: counters.bindGroupHits ?? 0,
+      bindGroupMisses: counters.bindGroupMisses ?? 0,
     );
     diagnostics.updateState(
       inputActive: _inputClient.isActive,
@@ -752,9 +734,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   void _updateTargetOutline() {
     final hit = _interaction.interactor.target(eyePosition, lookDirection);
     if (hit == null) {
-      targetOutline.hide();
+      renderer.targetOutline.hide();
     } else {
-      targetOutline.showAt(hit.x, hit.y, hit.z);
+      renderer.targetOutline.showAt(hit.x, hit.y, hit.z);
     }
   }
 

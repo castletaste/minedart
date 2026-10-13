@@ -130,6 +130,26 @@ revisions, dirty bookkeeping, or skylight.
 and `WorldInteractionController` are the two domain seams with independent
 rules and tests; additional thin adapters should not be added around them.
 
+## Rendering port
+
+Rendering goes through the engine-neutral `VoxelRenderer` port in
+`app/lib/render/voxel_renderer.dart`: chunk passes, voxel material controls,
+target outline, block particles, first-person camera controls, per-frame
+counters, and the renderer startup failure type. `ChunkRenderManager` keeps
+revision, render-distance, retained-count and budget bookkeeping and creates
+passes through `ChunkPassFactory`; it has no engine types, so its tests use a
+recording fake. `RenderLabBridge` and `ShowcaseBootstrap` also depend on the
+port only.
+
+The flame_3d implementation lives in `app/lib/render/flame3d/` (packed
+surfaces, materials, outline, particles, chunk passes, camera and counters).
+`MinedartGame` is still a `FlameGame3D`: Flame owns the loop, lifecycle and
+input, and the game creates `Flame3dVoxelRenderer` in `onLoad`. That base
+class is the only flame_3d import outside the adapter directory, enforced by
+`test/render/renderer_boundary_test.dart`. Replacing the renderer means a
+second port implementation plus a host that is not a `FlameGame3D`; see
+`spike/s7_flutter_scene/REPORT.md` for the flutter_scene evaluation.
+
 ## Validation
 
 Use the SDK pinned by `.fvmrc`, including subprocesses. For example, from the

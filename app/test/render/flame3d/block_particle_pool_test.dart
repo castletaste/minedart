@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:minedart/showcase/render/block_particle_pool.dart';
+import 'package:minedart/render/flame3d/block_particle_pool.dart';
 
 void main() {
   group('BlockParticlePool', () {

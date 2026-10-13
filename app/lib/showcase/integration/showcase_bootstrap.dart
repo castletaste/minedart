@@ -1,11 +1,13 @@
 import 'dart:async';
 
-import 'package:flame_3d/graphics.dart';
 import 'package:flutter/material.dart';
 import 'package:minedart_core/minedart_core.dart' show VoxelWorld;
 
 import '../../audio/audio.dart';
 import '../../data/worlds/worlds.dart';
+import '../../render/flame3d/flame3d_voxel_renderer.dart'
+    show initializeFlame3dGpu;
+import '../../render/voxel_renderer.dart';
 import 'launch_config.dart';
 import 'legacy_world_migration.dart';
 import 'showcase_app.dart';
@@ -44,7 +46,7 @@ final class ShowcaseBootstrapLoader {
     WorldRuntimeFactory? createRuntime,
     Uri Function()? launchUri,
     LegacyWorldReader? readLegacy,
-  }) : _initializeGpu = initializeGpu ?? GpuBackend.initialize,
+  }) : _initializeGpu = initializeGpu ?? initializeFlame3dGpu,
        _createRepository = createRepository ?? createDefaultWorldRepository,
        _createAudio = createAudio ?? (() => AudioService.create(maxPlayers: 4)),
        _createRuntime = createRuntime ?? WorldRuntime.create,
@@ -293,7 +295,7 @@ final class _StartupFailureMessage {
 }
 
 _StartupFailureMessage _startupFailureMessage(Object error) {
-  if (error is! GpuInitializationException) {
+  if (error is! RendererInitializationException) {
     return const _StartupFailureMessage(
       'Minedart could not start',
       'The game could not finish loading. Check your connection and try again.',
@@ -301,16 +303,17 @@ _StartupFailureMessage _startupFailureMessage(Object error) {
   }
 
   return switch (error.kind) {
-    GpuInitializationFailureKind.apiUnavailable => const _StartupFailureMessage(
-      'WebGPU is unavailable',
-      'Update your browser and make sure hardware acceleration is enabled.',
-    ),
-    GpuInitializationFailureKind.adapterUnavailable =>
+    RendererInitializationFailureKind.apiUnavailable =>
+      const _StartupFailureMessage(
+        'WebGPU is unavailable',
+        'Update your browser and make sure hardware acceleration is enabled.',
+      ),
+    RendererInitializationFailureKind.adapterUnavailable =>
       const _StartupFailureMessage(
         'No compatible graphics adapter',
         'Enable hardware acceleration or try another supported browser.',
       ),
-    GpuInitializationFailureKind.deviceUnavailable =>
+    RendererInitializationFailureKind.deviceUnavailable =>
       const _StartupFailureMessage(
         'Graphics could not start',
         'Close other graphics-heavy tabs, then try again.',

@@ -1,31 +1,27 @@
 import 'dart:typed_data';
-import 'package:flame_3d/camera.dart';
-import 'package:flame_3d/components.dart';
-import 'package:flame_3d/game.dart';
-import 'package:flame_3d/resources.dart';
+
 import 'package:minedart_core/minedart_core.dart';
 
 import '../diagnostics/resource_budget.dart';
-import 'packed_surface.dart';
+import 'voxel_renderer.dart';
 
-/// Owns up to two render components for every voxel chunk.
+/// Owns up to two renderer passes for every voxel chunk.
+///
+/// The bookkeeping (revisions, render-distance range, retained counts and
+/// bytes) is engine-neutral; [ChunkPassFactory] creates the renderer objects.
 final class ChunkRenderManager {
   ChunkRenderManager({
-    required World3D world,
-    required Material material,
+    required ChunkPassFactory passes,
     this.resourceBudget = const ResourceBudget(),
   })
     // The public constructor intentionally exposes readable argument names.
     // ignore: prefer_initializing_formals
-    : _world = world,
-       // ignore: prefer_initializing_formals
-       _material = material;
+    : _passes = passes;
 
   final ResourceBudget resourceBudget;
 
-  final World3D _world;
-  final Material _material;
-  final Map<int, _ChunkComponents> _components = {};
+  final ChunkPassFactory _passes;
+  final Map<int, _ChunkPasses> _components = {};
   final Map<int, int> _revisions = {};
   int _retainedComponentCount = 0;
   int _retainedMeshBytes = 0;
@@ -45,8 +41,9 @@ final class ChunkRenderManager {
   );
   bool isChunkInView(int chunkIndex) => _isInRange(chunkIndex);
 
-  /// Applies a cheap chunk-distance gate in addition to flame_3d's frustum
-  /// culling. Mesh/material instances stay retained when the preset changes.
+  /// Applies a cheap chunk-distance gate in addition to the renderer's
+  /// frustum culling. Mesh/material instances stay retained when the preset
+  /// changes.
   void updateVisibility({
     required double playerX,
     required double playerZ,
@@ -109,21 +106,22 @@ final class ChunkRenderManager {
     }
 
     final (cx, cy, cz) = _coordinates(data.chunkIndex);
-    final position = Vector3(
-      cx * WorldDims.chunkSize.toDouble(),
-      cy * WorldDims.chunkSize.toDouble(),
-      cz * WorldDims.chunkSize.toDouble(),
-    );
-    final components = _ChunkComponents(
-      opaque: _componentFor(
+    final components = _ChunkPasses(
+      opaque: _passFor(
+        ChunkPassKind.opaque,
+        cx,
+        cy,
+        cz,
         vertices: data.opaqueVertices,
         indices: data.opaqueIndices,
-        position: position,
       ),
-      translucent: _componentFor(
+      translucent: _passFor(
+        ChunkPassKind.translucent,
+        cx,
+        cy,
+        cz,
         vertices: data.translucentVertices,
         indices: data.translucentIndices,
-        position: position,
       ),
       meshBytes: nextMeshBytes,
     );
@@ -133,7 +131,6 @@ final class ChunkRenderManager {
     final inRange = _isInRange(data.chunkIndex);
     components.setDistanceVisible(inRange);
     if (inRange) _visibleChunkCount++;
-    components.addTo(_world);
   }
 
   /// Releases retained CPU/GPU mesh lifetimes outside the active chunk view.
@@ -156,22 +153,23 @@ final class ChunkRenderManager {
     return evicted;
   }
 
-  _DistanceCulledMeshComponent? _componentFor({
+  ChunkPassHandle? _passFor(
+    ChunkPassKind kind,
+    int cx,
+    int cy,
+    int cz, {
     required Float32List vertices,
     required Uint16List indices,
-    required Vector3 position,
   }) {
     if (indices.isEmpty) return null;
-    final mesh = Mesh()
-      ..addSurface(
-        PackedSurface(
-          vertices: vertices,
-          indices: indices,
-          material: _material,
-          aabb: _newChunkLocalAabb(),
-        ),
-      );
-    return _DistanceCulledMeshComponent(mesh: mesh, position: position.clone());
+    return _passes.createPass(
+      kind: kind,
+      chunkX: cx,
+      chunkY: cy,
+      chunkZ: cz,
+      vertices: vertices,
+      indices: indices,
+    );
   }
 
   bool _isInRange(int chunkIndex) {
@@ -186,54 +184,26 @@ final class ChunkRenderManager {
     final cy = chunkIndex ~/ (WorldDims.worldChunksX * WorldDims.worldChunksZ);
     return (cx, cy, cz);
   }
-
-  /// ChunkMesher writes local block coordinates: cube and crossed-quad
-  /// corners stay in 0..chunkSize, while lowered fluid tops only shrink that
-  /// range. This is the tightest content-independent bound shared by both
-  /// passes and avoids scanning/copying packed positions during every remesh.
-  static Aabb3 _newChunkLocalAabb() {
-    final extent = WorldDims.chunkSize.toDouble();
-    return Aabb3.minMax(Vector3.zero(), Vector3.all(extent));
-  }
 }
 
-final class _ChunkComponents {
-  const _ChunkComponents({
-    this.opaque,
-    this.translucent,
-    required this.meshBytes,
-  });
+final class _ChunkPasses {
+  _ChunkPasses({this.opaque, this.translucent, required this.meshBytes});
 
-  final _DistanceCulledMeshComponent? opaque;
-  final _DistanceCulledMeshComponent? translucent;
+  final ChunkPassHandle? opaque;
+  final ChunkPassHandle? translucent;
   final int meshBytes;
+  bool distanceVisible = false;
   int get componentCount =>
       (opaque == null ? 0 : 1) + (translucent == null ? 0 : 1);
-  bool get distanceVisible =>
-      opaque?.distanceVisible ?? translucent?.distanceVisible ?? false;
 
   void setDistanceVisible(bool visible) {
-    if (opaque != null) opaque!.distanceVisible = visible;
-    if (translucent != null) translucent!.distanceVisible = visible;
-  }
-
-  void addTo(World3D world) {
-    if (opaque != null) world.add(opaque!);
-    if (translucent != null) world.add(translucent!);
+    distanceVisible = visible;
+    opaque?.distanceVisible = visible;
+    translucent?.distanceVisible = visible;
   }
 
   void remove() {
-    opaque?.removeFromParent();
-    translucent?.removeFromParent();
+    opaque?.removeFromScene();
+    translucent?.removeFromScene();
   }
-}
-
-final class _DistanceCulledMeshComponent extends MeshComponent {
-  _DistanceCulledMeshComponent({required super.mesh, required super.position});
-
-  bool distanceVisible = true;
-
-  @override
-  bool isVisible(CameraComponent3D camera) =>
-      distanceVisible && super.isVisible(camera);
 }

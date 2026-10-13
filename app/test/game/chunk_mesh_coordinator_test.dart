@@ -1,12 +1,12 @@
 import 'dart:async';
 
-import 'package:flame_3d/camera.dart';
-import 'package:flame_3d/resources.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/game/chunk_mesh_coordinator.dart';
 import 'package:minedart/pipeline/mesh_pipeline_base.dart';
 import 'package:minedart/render/chunk_render_manager.dart';
 import 'package:minedart_core/minedart_core.dart';
+
+import '../render/fake_chunk_passes.dart';
 
 void main() {
   group('ChunkMeshCoordinator', () {
@@ -135,10 +135,7 @@ void main() {
           Blocks.stone,
         );
       final pipeline = _FakePipeline();
-      final manager = ChunkRenderManager(
-        world: World3D(),
-        material: Material.defaultMaterial,
-      );
+      final manager = ChunkRenderManager(passes: FakeChunkPasses());
       final coordinator = _coordinator(world, pipeline, chunks: manager)
         ..start();
       addTearDown(coordinator.close);
@@ -180,10 +177,7 @@ void main() {
     test('drops a late result from an older generation', () {
       final world = VoxelWorld()..setBlock(0, 0, 0, Blocks.stone);
       final pipeline = _FakePipeline();
-      final manager = ChunkRenderManager(
-        world: World3D(),
-        material: Material.defaultMaterial,
-      );
+      final manager = ChunkRenderManager(passes: FakeChunkPasses());
       final coordinator = _coordinator(world, pipeline, chunks: manager)
         ..start();
       addTearDown(coordinator.close);
@@ -276,10 +270,7 @@ void main() {
         final pipeline = _FakePipeline();
         final timings = <double>[];
         final failures = <Object>[];
-        final manager = ChunkRenderManager(
-          world: World3D(),
-          material: Material.defaultMaterial,
-        );
+        final manager = ChunkRenderManager(passes: FakeChunkPasses());
         final coordinator = _coordinator(
           world,
           pipeline,
@@ -343,9 +334,7 @@ ChunkMeshCoordinator _coordinator(
 }) => ChunkMeshCoordinator(
   world: world,
   pipeline: pipeline,
-  chunks:
-      chunks ??
-      ChunkRenderManager(world: World3D(), material: Material.defaultMaterial),
+  chunks: chunks ?? ChunkRenderManager(passes: FakeChunkPasses()),
   deferSnapshotCapture: deferSnapshotCapture,
   onMainThreadMeshTime: onMainThreadMeshTime ?? (_) {},
   onFailure: onFailure ?? (_, _) {},

@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flame_3d/graphics.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/audio/audio.dart';
 import 'package:minedart/data/worlds/worlds.dart';
+import 'package:minedart/render/voxel_renderer.dart';
 import 'package:minedart/showcase/integration/launch_config.dart';
 import 'package:minedart/showcase/integration/showcase_bootstrap.dart';
 import 'package:minedart/showcase/integration/world_presets.dart';
@@ -131,16 +131,19 @@ void main() {
       tester,
     ) async {
       const cases =
-          <GpuInitializationFailureKind, (String title, String description)>{
-            GpuInitializationFailureKind.apiUnavailable: (
+          <
+            RendererInitializationFailureKind,
+            (String title, String description)
+          >{
+            RendererInitializationFailureKind.apiUnavailable: (
               'WebGPU is unavailable',
               'Update your browser and make sure hardware acceleration is enabled.',
             ),
-            GpuInitializationFailureKind.adapterUnavailable: (
+            RendererInitializationFailureKind.adapterUnavailable: (
               'No compatible graphics adapter',
               'Enable hardware acceleration or try another supported browser.',
             ),
-            GpuInitializationFailureKind.deviceUnavailable: (
+            RendererInitializationFailureKind.deviceUnavailable: (
               'Graphics could not start',
               'Close other graphics-heavy tabs, then try again.',
             ),
@@ -150,7 +153,7 @@ void main() {
         await tester.pumpWidget(
           ShowcaseBootstrap(
             key: ValueKey(kind),
-            load: () async => throw GpuInitializationException(
+            load: () async => throw RendererInitializationException(
               kind,
               cause: StateError('private driver detail'),
             ),

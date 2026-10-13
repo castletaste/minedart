@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:minedart/showcase/render/target_outline.dart';
+import 'package:minedart/render/flame3d/target_outline.dart';
 
 void main() {
   group('TargetOutline', () {
