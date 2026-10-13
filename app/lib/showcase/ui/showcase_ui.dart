@@ -4,3 +4,4 @@ export 'pause_options.dart';
 export 'render_lab.dart';
 export 'showcase_panel.dart';
 export 'world_library.dart';
+export 'developer_health_panel.dart';

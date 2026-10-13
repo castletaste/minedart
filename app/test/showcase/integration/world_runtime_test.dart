@@ -111,7 +111,7 @@ void main() {
           pipelineFactory: () => pipeline,
         ),
         throwsA(
-          isA<WorldSessionFailure<void>>()
+          isA<WorldSessionException>()
               .having((failure) => failure.error, 'primary', same(primary))
               .having((failure) => failure.cleanupErrors, 'cleanup', [cleanup]),
         ),

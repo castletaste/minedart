@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' show Canvas;
 
 import 'package:flame/events.dart';
@@ -15,22 +14,23 @@ import 'package:minedart_core/minedart_core.dart';
 
 import '../assets/atlas_selection.dart';
 import '../audio/audio.dart';
-import '../input/double_tap_sprint_detector.dart';
+import '../diagnostics/diagnostics.dart';
 import '../input/game_bindings.dart';
 import '../input/game_input_service.dart';
 import '../input/mouse_look.dart';
-import '../input/player_input_mapper.dart';
 import '../input/sprint_fov.dart';
 import '../input/touch_input_state.dart';
 import '../hud/hud_state.dart';
-import '../interact/block_interactor.dart';
 import '../pipeline/mesh_pipeline.dart';
 import '../performance/performance.dart';
 import '../render/chunk_render_manager.dart';
 import '../render/voxel_material.dart';
 import '../showcase/render/showcase_render.dart';
 import 'chunk_mesh_coordinator.dart';
-import 'world_simulation_controller.dart';
+import 'game_host_port.dart';
+import 'player_motion_controller.dart';
+import 'world_effects.dart';
+import 'world_interaction_controller.dart';
 
 /// First-person MVP shell with native relative mouse look and voxel physics.
 final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
@@ -53,18 +53,17 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       ground + 2.0,
       spawnBlockZ + 0.5,
     );
-    final body = PlayerBody(position: initialFeet?.clone() ?? defaultFeet);
-    final eyePosition = Vector3.zero();
-    body.writeEyePosition(eyePosition);
+    final player = PlayerMotionController(
+      world: world,
+      initialFeet: initialFeet ?? defaultFeet,
+      initialYaw: initialYaw,
+      initialPitch: initialPitch,
+    );
     return MinedartGame._(
       world,
       pipeline,
       audio,
-      body,
-      eyePosition,
-      body.position.clone(),
-      initialYaw,
-      initialPitch,
+      player,
       input ?? GameInputService(),
       input == null,
     );
@@ -74,26 +73,26 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     this.voxelWorld,
     this.pipeline,
     this.audio,
-    this._playerBody,
-    this._eyePosition,
-    this._spawnFeet,
-    this._yaw,
-    this._pitch,
+    this._player,
     this.input,
     this._ownsInput,
   ) : super(
         camera: FirstPersonCamera(
-          following: _eyePosition,
+          following: _player.eyePosition,
           fovY: basePlayerFov,
-          position: _eyePosition,
+          position: _player.eyePosition,
         ),
-      );
+      ) {
+    _player.onFootstep = (blockId, seed) => _playAudio(
+      AudioCue.forBlock(blockId, BlockAudioAction.step),
+      seed: seed,
+    );
+    diagnostics = DiagnosticsCollector();
+  }
 
   static const _skyColor = Color(0xFF82C8FF);
-  static const _noclipSpeed = 24.0;
-  static const _keyboardLookSpeed = 1.35;
-  static const defaultMouseSensitivity = 0.004;
-  static const _pitchLimit = 89 * math.pi / 180;
+  static const defaultMouseSensitivity =
+      PlayerMotionController.defaultMouseSensitivity;
   static const _performanceSampleCapacity = int.fromEnvironment(
     'MINEDART_PERF_SAMPLE_CAPACITY',
     defaultValue: 240,
@@ -106,23 +105,40 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   final VoxelWorld voxelWorld;
   final MeshPipelineBase pipeline;
   final AudioServiceApi audio;
-  final PlayerBody _playerBody;
-  final Vector3 _eyePosition;
-  final Vector3 _spawnFeet;
-  final PhysicsSim _physics = PhysicsSim();
-  late final WorldSimulationController _simulation = WorldSimulationController(
-    world: voxelWorld,
-    onChanges: _applySimulationChanges,
-  );
-  EditHistory get editHistory => _simulation.history;
-  WorldTickEngine get worldTicks => _simulation.ticks;
+  final PlayerMotionController _player;
+  late final WorldInteractionController _interaction =
+      WorldInteractionController(
+        world: voxelWorld,
+        hud: hud,
+        effects: CallbackWorldEffects(
+          onRemesh: remeshDirty,
+          onParticle:
+              ({
+                required blockId,
+                required x,
+                required y,
+                required z,
+                count = 8,
+              }) {
+                particlePool.emitBlock(
+                  blockId: blockId,
+                  x: x,
+                  y: y,
+                  z: z,
+                  count: count,
+                );
+              },
+          onAudio: (cue, {seed = 0}) => _playAudio(cue, seed: seed),
+        ),
+      );
+  EditHistory get editHistory => _interaction.editHistory;
+  WorldTickEngine get worldTicks => _interaction.worldTicks;
   final GameInputService input;
   final bool _ownsInput;
   late final GameInputClient _inputClient = input.createClient(_onMouseEvent);
   final Completer<Object?> _ready = Completer<Object?>();
   final Completer<void> _removed = Completer<void>();
-  bool _terminal = false;
-  bool _resourcesReady = false;
+  _GameLifecycle _lifecycle = _GameLifecycle.created;
   ChunkMeshCoordinator? _meshes;
   Future<void> _meshCleanup = Future<void>.value();
 
@@ -132,6 +148,14 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   Future<void> get removed => _removed.future;
   Future<void> get meshCleanup => _meshCleanup;
   bool get isSessionDisposed => _terminal;
+
+  bool get _terminal => switch (_lifecycle) {
+    _GameLifecycle.failed ||
+    _GameLifecycle.removing ||
+    _GameLifecycle.removed => true,
+    _ => false,
+  };
+  bool get _resourcesReady => _lifecycle == _GameLifecycle.ready;
 
   void activateInput() => _inputClient.activate();
 
@@ -143,36 +167,18 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   Future<void> quiesceSession() {
     pauseEngine();
-    _keys.clear();
-    _pendingMouseDx = 0;
-    _pendingMouseDy = 0;
-    _touchInput.reset();
-    _sprintDetector.reset();
+    _player.clearInput();
     return _inputClient.suspend();
   }
 
-  final DoubleTapSprintDetector _sprintDetector = DoubleTapSprintDetector();
-  final FootstepCadence _footstepCadence = FootstepCadence();
-  final Set<LogicalKeyboardKey> _keys = <LogicalKeyboardKey>{};
-  final TouchInputState _touchInput = TouchInputState();
-  int _footstepSerial = 0;
-  GameBindings _bindings = GameBindings();
-  double _mouseSensitivity = defaultMouseSensitivity;
-  bool _invertMouseY = false;
-
-  void Function()? onPauseRequested;
-  void Function()? onMovementActivity;
-  void Function(FogPreset preset)? onFogPresetChanged;
+  MinedartGameHostPort? hostPort;
 
   void setBindings(GameBindings value) {
-    _bindings = value.copy();
-    _keys.clear();
-    _sprintDetector.reset();
+    _player.setBindings(value);
   }
 
   void setMouseOptions({required double sensitivity, required bool invertY}) {
-    _mouseSensitivity = sensitivity.clamp(0.0005, 0.02);
-    _invertMouseY = invertY;
+    _player.setMouseOptions(sensitivity: sensitivity, invertY: invertY);
   }
 
   late final ChunkRenderManager chunks;
@@ -188,11 +194,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     interval: const Duration(milliseconds: _performanceSnapshotIntervalMs),
   );
   final Stopwatch _performanceClock = Stopwatch()..start();
-  double _yaw;
-  double _pitch;
-  double _pendingMouseDx = 0;
-  double _pendingMouseDy = 0;
-  bool _noclip = false;
   bool _mouseCaptureUnavailable = false;
   bool _hadMouseCapture = false;
   bool _mouseCapturePending = false;
@@ -205,7 +206,7 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   set simulationPaused(bool paused) {
     if (_simulationPaused == paused) return;
     _simulationPaused = paused;
-    if (paused) _touchInput.reset();
+    if (paused) _player.touchInput.reset();
   }
 
   void setRenderDistanceChunks(int chunks) {
@@ -229,76 +230,72 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   /// HUD model shared with the Flutter overlay.
   final HudState hud = HudState();
-
-  late final BlockInteractor interactor = BlockInteractor(
-    world: voxelWorld,
-    onDirty: remeshDirty,
-  );
+  late final DiagnosticsCollector diagnostics;
 
   /// Scratch look direction, reused to keep the click path allocation-free.
   final Vector3 _lookDirection = Vector3(0, 0, -1);
 
   /// Eye position the camera follows.
-  Vector3 get eyePosition => _eyePosition;
-  Vector3 get playerFeet => _playerBody.position;
+  Vector3 get eyePosition => _player.eyePosition;
+  Vector3 get playerFeet => _player.body.position;
   Vector3 get playerMapPosition =>
-      _noclip ? _eyePosition : _playerBody.position;
-  Vector3 get spawnFeet => _spawnFeet;
-  double get cameraYaw => _yaw;
-  double get cameraPitch => _pitch;
-  bool get isSprinting => _sprintDetector.isSprinting || _touchInput.sprintHeld;
+      _player.noclip ? _player.eyePosition : _player.body.position;
+  Vector3 get spawnFeet => _player.spawnFeet;
+  double get cameraYaw => _player.yaw;
+  double get cameraPitch => _player.pitch;
+  bool get isSprinting => _player.isSprinting;
 
   /// Enables the touch source without changing desktop pointer-lock input.
   void setTouchControlsEnabled(bool enabled) {
     if (_terminal) {
-      _touchInput.setEnabled(false);
+      _player.touchInput.setEnabled(false);
       return;
     }
-    _touchInput.setEnabled(enabled);
+    _player.touchInput.setEnabled(enabled);
   }
 
   void setTouchMovement({required double forward, required double strafe}) {
     if (_acceptsTouchInput) {
-      _touchInput.setMovement(forward: forward, strafe: strafe);
+      _player.touchInput.setMovement(forward: forward, strafe: strafe);
     }
   }
 
   void setTouchJumpHeld(bool held) {
-    if (_acceptsTouchInput) _touchInput.setJumpHeld(held);
+    if (_acceptsTouchInput) _player.touchInput.setJumpHeld(held);
   }
 
   void requestTouchJump() {
-    if (_acceptsTouchInput) _touchInput.requestJump();
+    if (_acceptsTouchInput) _player.touchInput.requestJump();
   }
 
   void setTouchSprintHeld(bool held) {
-    if (_acceptsTouchInput) _touchInput.setSprintHeld(held);
+    if (_acceptsTouchInput) _player.touchInput.setSprintHeld(held);
   }
 
   void addTouchLookDelta(double dx, double dy) {
-    if (_acceptsTouchInput) _touchInput.addLookDelta(dx, dy);
+    if (_acceptsTouchInput) _player.touchInput.addLookDelta(dx, dy);
   }
 
   void requestTouchBreak() {
-    if (_acceptsTouchInput) _touchInput.requestBreak();
+    if (_acceptsTouchInput) _player.touchInput.requestBreak();
   }
 
   void requestTouchPlace() {
-    if (_acceptsTouchInput) _touchInput.requestPlace();
+    if (_acceptsTouchInput) _player.touchInput.requestPlace();
   }
 
-  void resetTouchInput() => _touchInput.reset();
+  void resetTouchInput() => _player.touchInput.reset();
 
   /// Clears held input before a browser tab can suspend this game loop.
   void setAppForeground(bool foreground) {
     _appForeground = foreground;
-    if (!foreground) _touchInput.reset();
+    if (!foreground) _player.touchInput.reset();
   }
 
   bool get _acceptsTouchInput =>
       !_terminal &&
       _resourcesReady &&
-      _touchInput.enabled &&
+      _player.touchInput.enabled &&
       _inputClient.isActive &&
       _appForeground &&
       !_uiInputCaptured &&
@@ -314,23 +311,23 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   /// mouse does not also break a block. Platforms without the native bridge
   /// fall back to always-on interaction.
   bool get interactionEnabled =>
-      _canInteract(_BlockInteractionSource.capturedPointer);
+      _canInteract(_WorldInteractionSource.capturedPointer);
 
-  bool _canInteract(_BlockInteractionSource source) => switch (source) {
-    _BlockInteractionSource.capturedPointer =>
+  bool _canInteract(_WorldInteractionSource source) => switch (source) {
+    _WorldInteractionSource.capturedPointer =>
       !_terminal &&
           _inputClient.isActive &&
           !_uiInputCaptured &&
           (_inputClient.isCaptured || _mouseCaptureUnavailable),
-    _BlockInteractionSource.touchControls => _acceptsTouchInput,
+    _WorldInteractionSource.touchControls => _acceptsTouchInput,
   };
 
   void setUiInputCaptured(bool captured) {
     if (_uiInputCaptured == captured) return;
     _uiInputCaptured = captured;
-    _keys.clear();
-    if (captured) _touchInput.reset();
-    _sprintDetector.reset();
+    _player.keys.clear();
+    if (captured) _player.touchInput.reset();
+    _player.sprintDetector.reset();
     if (captured) {
       unawaited(_releaseMouse().catchError(_reportInputError));
     } else if (!paused && !_terminal) {
@@ -351,91 +348,37 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   /// Left click: break the block under the crosshair.
   void breakTargetBlock() {
-    _breakTargetBlock(_BlockInteractionSource.capturedPointer);
+    _breakTargetBlock(_WorldInteractionSource.capturedPointer);
   }
 
-  void _breakTargetBlock(_BlockInteractionSource source) {
+  void _breakTargetBlock(_WorldInteractionSource source) {
     if (!_canInteract(source)) return;
-    final hit = interactor.target(eyePosition, lookDirection);
-    final brokenBlockId = hit == null
-        ? Blocks.air
-        : Blocks.id(voxelWorld.blockAt(hit.x, hit.y, hit.z));
-    if (hit != null && brokenBlockId == Blocks.tnt) {
-      if (worldTicks.activateTnt(voxelWorld, hit.x, hit.y, hit.z)) {
-        _simulation.beginUserCascade();
-        hud.recordAction('tnt fuse ${hit.x}/${hit.y}/${hit.z}');
-        _playAudio(AudioCue.tntFuse, seed: _editAudioSeed(hit.x, hit.y, hit.z));
-      }
-      return;
-    }
-    final result = interactor.breakBlock(eyePosition, lookDirection);
-    hud.recordAction(
-      result.changed
-          ? 'broke ${result.x}/${result.y}/${result.z}'
-          : 'break none',
-    );
-    if (result.changed) {
-      _simulation.recordUserEdit(result.changeSet);
-      particlePool.emitBlock(
-        blockId: brokenBlockId,
-        x: result.x,
-        y: result.y,
-        z: result.z,
-      );
-      _playAudio(
-        AudioCue.forBlock(brokenBlockId, BlockAudioAction.breakBlock),
-        seed: _editAudioSeed(result.x, result.y, result.z),
-      );
-    }
+    _interaction.breakTarget(eyePosition, lookDirection);
   }
 
   /// Right click: place the selected hotbar block against the targeted face.
   void placeSelectedBlock() {
-    _placeSelectedBlock(_BlockInteractionSource.capturedPointer);
+    _placeSelectedBlock(_WorldInteractionSource.capturedPointer);
   }
 
-  void _placeSelectedBlock(_BlockInteractionSource source) {
+  void _placeSelectedBlock(_WorldInteractionSource source) {
     if (!_canInteract(source)) return;
-    final result = interactor.placeBlock(
-      eyePosition,
-      lookDirection,
-      hud.selectedBlock,
-    );
-    hud.recordAction(
-      result.changed
-          ? 'placed ${result.x}/${result.y}/${result.z}'
-          : 'place none',
-    );
-    if (result.changed) {
-      _simulation.recordUserEdit(result.changeSet);
-      particlePool.emitBlock(
-        blockId: result.blockId,
-        x: result.x,
-        y: result.y,
-        z: result.z,
-        count: 3,
-      );
-      _playAudio(
-        AudioCue.forBlock(result.blockId, BlockAudioAction.placeBlock),
-        seed: _editAudioSeed(result.x, result.y, result.z),
-      );
-    }
+    _interaction.placeSelected(eyePosition, lookDirection, hud.selectedBlock);
   }
-
-  static int _editAudioSeed(int x, int y, int z) =>
-      x * 73856093 ^ y * 19349663 ^ z * 83492791;
 
   @override
   Color backgroundColor() => _skyColor;
 
   @override
   Future<void> onLoad() async {
+    if (_terminal) return;
+    _lifecycle = _GameLifecycle.loading;
     try {
       await super.onLoad();
       if (_terminal) return;
       camera
         ..resetRotation()
-        ..rotate(_yaw, _pitch);
+        ..rotate(_player.yaw, _player.pitch);
       images.prefix = 'assets/';
       final atlas = await images.loadTexture(selectedAtlas.assetPath);
       if (_terminal) return;
@@ -450,7 +393,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         voxelMaterial = nativeMaterial;
         material = nativeMaterial;
       }
-      chunks = ChunkRenderManager(world: world, material: material);
+      chunks = ChunkRenderManager(
+        world: world,
+        material: material,
+        resourceBudget: diagnostics.budget,
+      );
 
       targetOutline = TargetOutline()..hide();
       particlePool = BlockParticlePool();
@@ -479,10 +426,20 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         onMainThreadMeshTime: frameMetrics.telemetry.accumulateMainThreadMesh,
         onFailure: _reportMeshFailure,
       )..start();
-      _resourcesReady = true;
-      _simulation.initialize();
+      _lifecycle = _GameLifecycle.ready;
+      diagnostics.updateState(
+        rendererReady: true,
+        inputActive: _inputClient.isActive,
+      );
+      diagnostics.updatePerformance(frameMetrics.snapshot());
+      diagnostics.publish();
+      _interaction.initialize();
       _updateChunkView(force: true);
     } catch (error) {
+      if (_lifecycle != _GameLifecycle.removing &&
+          _lifecycle != _GameLifecycle.removed) {
+        _lifecycle = _GameLifecycle.failed;
+      }
       if (!_ready.isCompleted) _ready.complete(error);
       rethrow;
     }
@@ -508,10 +465,13 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   /// Safe for factory failure before mounting and for repeated host teardown.
   void disposeSessionResources() {
-    if (_terminal) return;
-    _terminal = true;
+    if (_lifecycle == _GameLifecycle.removing ||
+        _lifecycle == _GameLifecycle.removed) {
+      return;
+    }
+    _lifecycle = _GameLifecycle.removing;
     pauseEngine();
-    _touchInput
+    _player.touchInput
       ..reset()
       ..setEnabled(false);
     if (!_ready.isCompleted) _ready.complete(StateError('Game was removed'));
@@ -519,7 +479,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     _inputClient.dispose();
     _renderLab?.dispose();
     hud.dispose();
+    diagnostics.dispose();
     if (_ownsInput) unawaited(input.close().catchError(_reportInputError));
+    _lifecycle = _GameLifecycle.removed;
   }
 
   void _reportMeshFailure(Object error, StackTrace stack) {
@@ -545,9 +507,9 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   }
 
   void _updateChunkView({bool force = false}) => _meshes?.updateView(
-    playerX: _eyePosition.x,
-    playerY: _eyePosition.y,
-    playerZ: _eyePosition.z,
+    playerX: _player.eyePosition.x,
+    playerY: _player.eyePosition.y,
+    playerZ: _player.eyePosition.z,
     renderDistanceChunks: _renderDistanceChunks,
     force: force,
   );
@@ -556,13 +518,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
 
   void _updateMeshActivity(TouchInputFrame touch) {
     final hasImmediateInput =
-        _pendingMouseDx != 0 ||
-        _pendingMouseDy != 0 ||
+        _player.hasPendingLook ||
         _hasInteractiveKeyInput ||
         touch.hasImmediateInput;
     if (hasImmediateInput) {
       pipeline.activity = MeshPipelineActivity.interactive;
-    } else if (_playerBody.velocity.length2 > 0.01) {
+    } else if (_player.body.velocity.length2 > 0.01) {
       pipeline.activity = MeshPipelineActivity.moving;
     } else if (_meshQueueCount > 0) {
       pipeline.activity = MeshPipelineActivity.loading;
@@ -571,24 +532,18 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     }
   }
 
-  bool get _hasInteractiveKeyInput =>
-      _keys.contains(_bindings[GameControl.moveForward]) ||
-      _keys.contains(_bindings[GameControl.moveBackward]) ||
-      _keys.contains(_bindings[GameControl.strafeLeft]) ||
-      _keys.contains(_bindings[GameControl.strafeRight]) ||
-      _keys.contains(_bindings[GameControl.jump]) ||
-      _keys.contains(LogicalKeyboardKey.arrowLeft) ||
-      _keys.contains(LogicalKeyboardKey.arrowRight) ||
-      _keys.contains(LogicalKeyboardKey.arrowUp) ||
-      _keys.contains(LogicalKeyboardKey.arrowDown);
+  bool get _hasInteractiveKeyInput => _player.hasInteractiveKeyInput;
 
   /// Re-mesh the given dirty chunk indices (after a block edit).
-  void remeshDirty(Set<int> dirtyChunks) => _meshes?.remeshDirty(
-    dirtyChunks,
-    playerX: _eyePosition.x,
-    playerY: _eyePosition.y,
-    playerZ: _eyePosition.z,
-  );
+  void remeshDirty(Set<int> dirtyChunks) {
+    _meshes?.remeshDirty(
+      dirtyChunks,
+      playerX: _player.eyePosition.x,
+      playerY: _player.eyePosition.y,
+      playerZ: _player.eyePosition.z,
+    );
+    hostPort?.worldChanged();
+  }
 
   @override
   KeyEventResult onKeyEvent(
@@ -599,14 +554,11 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     if (event is KeyDownEvent && _isMovementKey(event.logicalKey)) {
       _reportMovementActivity();
     }
-    _updateSprintState(event);
+    _player.updateKeyState(event, keysPressed);
     // Flutter UI shortcuts live in the ancestor CallbackShortcuts. Returning
     // ignored here lets E/F3/Escape bubble out of Flame's focused game node
     // on macOS while browser Pointer Lock still handles consumed Escape.
     if (_isUiShortcut(event.logicalKey)) {
-      _keys
-        ..clear()
-        ..addAll(keysPressed);
       return KeyEventResult.ignored;
     }
     if (event is KeyDownEvent) {
@@ -618,55 +570,37 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         shift ? _redoWorldEdit() : _undoWorldEdit();
       } else if (command && event.logicalKey == LogicalKeyboardKey.keyY) {
         _redoWorldEdit();
-      } else if (event.logicalKey == _bindings[GameControl.storeSpawn]) {
+      } else if (event.logicalKey == _player.binding(GameControl.storeSpawn)) {
         _setSpawnAtPlayer();
-      } else if (event.logicalKey == _bindings[GameControl.respawn]) {
+      } else if (event.logicalKey == _player.binding(GameControl.respawn)) {
         _respawnAtSavedPoint();
-      } else if (event.logicalKey == _bindings[GameControl.cycleFog]) {
+      } else if (event.logicalKey == _player.binding(GameControl.cycleFog)) {
         final update = renderLab.cycleFogPreset();
-        onFogPresetChanged?.call(update.settings.fogPreset);
+        hostPort?.fogPresetChanged(update.settings.fogPreset);
         setRenderDistanceChunks(update.settings.fogPreset.renderDistanceChunks);
         hud.recordAction(
           update.status == RenderLabUpdateStatus.unsupported
               ? 'fog unsupported'
               : 'fog ${update.settings.fogPreset.name}',
         );
-      } else if (event.logicalKey == _bindings[GameControl.toggleNoclip]) {
+      } else if (event.logicalKey ==
+          _player.binding(GameControl.toggleNoclip)) {
         _toggleNoclip();
       } else {
         _handleHudKeyDown(event.logicalKey);
       }
     }
-    _keys
-      ..clear()
-      ..addAll(keysPressed);
     return KeyEventResult.handled;
-  }
-
-  void _updateSprintState(KeyEvent event) {
-    if (event.logicalKey != _bindings[GameControl.moveForward]) return;
-    if (event is KeyRepeatEvent) {
-      _sprintDetector.forwardDown(event.timeStamp, isRepeat: true);
-    } else if (event is KeyDownEvent) {
-      _sprintDetector.forwardDown(event.timeStamp, isRepeat: event.synthesized);
-    } else if (event is KeyUpEvent) {
-      _sprintDetector.forwardUp();
-    }
   }
 
   bool _isUiShortcut(LogicalKeyboardKey key) =>
       key == LogicalKeyboardKey.escape ||
-      key == _bindings[GameControl.openInventory] ||
-      key == _bindings[GameControl.debugOverlay];
+      key == _player.binding(GameControl.openInventory) ||
+      key == _player.binding(GameControl.debugOverlay);
 
-  bool _isMovementKey(LogicalKeyboardKey key) =>
-      key == _bindings[GameControl.moveForward] ||
-      key == _bindings[GameControl.moveBackward] ||
-      key == _bindings[GameControl.strafeLeft] ||
-      key == _bindings[GameControl.strafeRight] ||
-      key == _bindings[GameControl.jump];
+  bool _isMovementKey(LogicalKeyboardKey key) => _player.isMovementKey(key);
 
-  void _reportMovementActivity() => onMovementActivity?.call();
+  void _reportMovementActivity() => hostPort?.movementActivity();
 
   static bool _hasCommandModifier(Set<LogicalKeyboardKey> keys) =>
       keys.contains(LogicalKeyboardKey.metaLeft) ||
@@ -699,22 +633,28 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
   @override
   void update(double dt) {
     if (_terminal || !_resourcesReady) return;
-    final touch = _touchInput.consumeFrame();
+    final touch = _player.consumeTouchFrame();
     final telemetry = frameMetrics.telemetry;
     telemetry.recordWallFrame(dt * 1000);
     telemetry.startTiming(PerformanceMetric.update);
     try {
       _updateMeshActivity(touch);
       _meshes?.drainPendingCaptures();
-      _updateLook(dt, touch);
+      if (_player.updateLook(dt, touch)) {
+        _reportMovementActivity();
+        camera
+          ..resetRotation()
+          ..rotate(_player.yaw, _player.pitch);
+      }
       _applyTouchActions(touch);
       if (!simulationPaused) {
-        if (_noclip) {
-          _updateNoclip(dt, touch);
-        } else {
-          _updatePhysics(dt, touch);
+        _player.updateMovement(dt, touch);
+        if (touch.hasImmediateInput ||
+            _player.hasInteractiveKeyInput ||
+            _player.body.velocity.length2 > 0.01) {
+          _reportMovementActivity();
         }
-        _simulation.advance(dt);
+        _interaction.advance(dt);
       }
       camera.fovY = stepSprintFov(
         current: camera.fovY,
@@ -723,11 +663,12 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
         dt: dt,
       );
       _updateChunkView();
+      _publishPlayerViewIfChanged();
       hud.recordFrame(
         dt,
-        _eyePosition.x,
-        _eyePosition.y,
-        _eyePosition.z,
+        _player.eyePosition.x,
+        _player.eyePosition.y,
+        _player.eyePosition.z,
         visibleChunks: chunks.visibleChunkCount,
         loadedChunks: chunks.loadedChunkCount,
         meshQueue: _meshQueueCount,
@@ -742,6 +683,23 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     } finally {
       telemetry.stopAndRecordTiming(PerformanceMetric.update);
     }
+  }
+
+  double _lastViewX = double.nan;
+  double _lastViewZ = double.nan;
+  double _lastViewHeading = double.nan;
+
+  void _publishPlayerViewIfChanged() {
+    final x = playerMapPosition.x;
+    final z = playerMapPosition.z;
+    final heading = cameraYaw;
+    if (x == _lastViewX && z == _lastViewZ && heading == _lastViewHeading) {
+      return;
+    }
+    _lastViewX = x;
+    _lastViewZ = z;
+    _lastViewHeading = heading;
+    hostPort?.playerViewChanged();
   }
 
   @override
@@ -776,14 +734,23 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
       bindGroupHits: cache?.bindGroupHits ?? 0,
       bindGroupMisses: cache?.bindGroupMisses ?? 0,
     );
+    diagnostics.updateState(
+      inputActive: _inputClient.isActive,
+      rendererReady: _resourcesReady,
+      activeChunks: chunks.loadedChunkCount,
+    );
     final snapshot = _performancePublisher.publishIfDue(
       elapsedMicroseconds: _performanceClock.elapsedMicroseconds,
     );
-    if (snapshot != null) hud.updatePerformanceSnapshot(snapshot);
+    if (snapshot != null) {
+      hud.updatePerformanceSnapshot(snapshot);
+      diagnostics.updatePerformance(snapshot);
+      diagnostics.publish();
+    }
   }
 
   void _updateTargetOutline() {
-    final hit = interactor.target(eyePosition, lookDirection);
+    final hit = _interaction.interactor.target(eyePosition, lookDirection);
     if (hit == null) {
       targetOutline.hide();
     } else {
@@ -791,53 +758,20 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     }
   }
 
-  void _applySimulationChanges(WorldChangeSet changes) {
-    remeshDirty(changes.dirtyChunks);
-    final exploded = shouldPlayExplosionForWorldChanges(changes.changes);
-    var removed = 0;
-    for (final change in changes.changes) {
-      final oldId = Blocks.id(change.oldRaw);
-      if (oldId != Blocks.air && Blocks.id(change.newRaw) == Blocks.air) {
-        removed++;
-        particlePool.emitBlock(
-          blockId: oldId,
-          x: change.x,
-          y: change.y,
-          z: change.z,
-          count: 2,
-        );
-      }
-    }
-    if (exploded) {
-      _playAudio(AudioCue.explosion, seed: removed);
-    }
-  }
-
   void _undoWorldEdit() {
-    final changes = _simulation.undo();
-    _applyHistoryResult(changes, 'undo');
+    _interaction.undo();
   }
 
   void _redoWorldEdit() {
-    final changes = _simulation.redo();
-    _applyHistoryResult(changes, 'redo');
-  }
-
-  void _applyHistoryResult(WorldChangeSet changes, String action) {
-    if (changes.isEmpty) {
-      hud.recordAction('$action none');
-      return;
-    }
-    remeshDirty(changes.dirtyChunks);
-    hud.recordAction('$action ${changes.changes.length}');
+    _interaction.redo();
   }
 
   void _applyTouchActions(TouchInputFrame touch) {
     for (var request = 0; request < touch.breakRequests; request++) {
-      _breakTargetBlock(_BlockInteractionSource.touchControls);
+      _breakTargetBlock(_WorldInteractionSource.touchControls);
     }
     for (var request = 0; request < touch.placeRequests; request++) {
-      _placeSelectedBlock(_BlockInteractionSource.touchControls);
+      _placeSelectedBlock(_WorldInteractionSource.touchControls);
     }
   }
 
@@ -846,21 +780,20 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     switch (event) {
       case MouseDelta(:final dx, :final dy):
         if (dx != 0 || dy != 0) _reportMovementActivity();
-        _pendingMouseDx += dx;
-        _pendingMouseDy += dy;
+        _player.addMouseDelta(dx, dy);
       case MouseCaptureChanged(:final captured):
         final userReleasedWebCapture =
             kIsWeb && _hadMouseCapture && !captured && !_uiInputCaptured;
         _hadMouseCapture = captured;
         if (!captured) {
-          _keys.clear();
-          _sprintDetector.reset();
+          _player.keys.clear();
+          _player.sprintDetector.reset();
         }
         // Browsers consume Escape while leaving Pointer Lock, so Flutter does
         // not reliably receive the key event. Treat an unexpected lock loss as
         // the web equivalent of Escape; programmatic modal releases are
         // ignored because setUiInputCaptured(true) happens first.
-        if (userReleasedWebCapture) onPauseRequested?.call();
+        if (userReleasedWebCapture) hostPort?.pauseRequested();
       case MousePrimaryPressed():
         breakTargetBlock();
       case MouseSecondaryPressed():
@@ -886,95 +819,6 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     debugPrint('Mouse input failed: $error\n$stack');
   }
 
-  void _updateLook(double dt, TouchInputFrame touch) {
-    var yawDelta = -(_pendingMouseDx + touch.lookDx) * _mouseSensitivity;
-    // Standard FPS convention: mouse up looks up (macOS deltaY grows
-    // downward, so it must be negated).
-    var pitchDelta =
-        (_invertMouseY ? 1 : -1) *
-        (_pendingMouseDy + touch.lookDy) *
-        _mouseSensitivity;
-    _pendingMouseDx = 0;
-    _pendingMouseDy = 0;
-
-    if (_keys.contains(LogicalKeyboardKey.arrowLeft)) {
-      yawDelta += _keyboardLookSpeed * dt;
-    }
-    if (_keys.contains(LogicalKeyboardKey.arrowRight)) {
-      yawDelta -= _keyboardLookSpeed * dt;
-    }
-    if (_keys.contains(LogicalKeyboardKey.arrowUp)) {
-      pitchDelta += _keyboardLookSpeed * dt;
-    }
-    if (_keys.contains(LogicalKeyboardKey.arrowDown)) {
-      pitchDelta -= _keyboardLookSpeed * dt;
-    }
-    if (yawDelta == 0 && pitchDelta == 0) return;
-    _reportMovementActivity();
-
-    _yaw = (_yaw + yawDelta) % (math.pi * 2);
-    _pitch = (_pitch + pitchDelta).clamp(-_pitchLimit, _pitchLimit);
-    camera
-      ..resetRotation()
-      ..rotate(_yaw, _pitch);
-  }
-
-  void _updatePhysics(double dt, TouchInputFrame touch) {
-    final input = PlayerInputMapper.fromCameraAxes(
-      yaw: _yaw,
-      forward:
-          (_axis(
-                    _bindings[GameControl.moveForward],
-                    _bindings[GameControl.moveBackward],
-                  ) +
-                  touch.forward)
-              .clamp(-1.0, 1.0),
-      strafe:
-          (_axis(
-                    _bindings[GameControl.strafeRight],
-                    _bindings[GameControl.strafeLeft],
-                  ) +
-                  touch.strafe)
-              .clamp(-1.0, 1.0),
-      jump:
-          _keys.contains(_bindings[GameControl.jump]) ||
-          touch.jumpHeld ||
-          touch.jumpRequested,
-      sprint: _sprintDetector.isSprinting || touch.sprintHeld,
-    );
-    if (input.moveX != 0 || input.moveZ != 0 || input.jump) {
-      _reportMovementActivity();
-    }
-    final previousX = _playerBody.position.x;
-    final previousZ = _playerBody.position.z;
-    final physicsSteps = _physics.advance(voxelWorld, _playerBody, input, dt);
-    if (physicsSteps > 0) _touchInput.acknowledgeJumpRequest();
-    final movedX = _playerBody.position.x - previousX;
-    final movedZ = _playerBody.position.z - previousZ;
-    if (_footstepCadence.update(
-      horizontalDistance: math.sqrt(movedX * movedX + movedZ * movedZ),
-      grounded: _playerBody.onGround,
-      sprinting: isSprinting,
-    )) {
-      _playFootstep();
-    }
-    _playerBody.writeEyePosition(_eyePosition);
-  }
-
-  void _playFootstep() {
-    final blockX = _playerBody.position.x.floor();
-    final blockY = (_playerBody.position.y - PhysicsSim.collisionEpsilon * 2)
-        .floor();
-    final blockZ = _playerBody.position.z.floor();
-    final blockId = Blocks.id(voxelWorld.blockAt(blockX, blockY, blockZ));
-    if (blockId == Blocks.air) return;
-
-    final seed =
-        _editAudioSeed(blockX, blockY, blockZ) ^
-        (_footstepSerial++ * 0x1F123BB5);
-    _playAudio(AudioCue.forBlock(blockId, BlockAudioAction.step), seed: seed);
-  }
-
   void _playAudio(AudioCue cue, {int seed = 0}) {
     try {
       unawaited(audio.play(cue, seed: seed).catchError(_reportAudioError));
@@ -987,90 +831,22 @@ final class MinedartGame extends FlameGame3D<World3D, FirstPersonCamera>
     debugPrint('Audio playback failed: $error\n$stack');
   }
 
-  void _updateNoclip(double dt, TouchInputFrame touch) {
-    _touchInput.acknowledgeJumpRequest();
-    final forwardAxis =
-        (_axis(
-                  _bindings[GameControl.moveForward],
-                  _bindings[GameControl.moveBackward],
-                ) +
-                touch.forward)
-            .clamp(-1.0, 1.0);
-    final strafeAxis =
-        (_axis(
-                  _bindings[GameControl.strafeRight],
-                  _bindings[GameControl.strafeLeft],
-                ) +
-                touch.strafe)
-            .clamp(-1.0, 1.0);
-    if (forwardAxis == 0 && strafeAxis == 0) return;
-
-    final sinYaw = math.sin(_yaw);
-    final cosYaw = math.cos(_yaw);
-    final sinPitch = math.sin(_pitch);
-    final cosPitch = math.cos(_pitch);
-    var moveX = forwardAxis * -sinYaw * cosPitch + strafeAxis * cosYaw;
-    var moveY = forwardAxis * sinPitch;
-    var moveZ = forwardAxis * -cosYaw * cosPitch - strafeAxis * sinYaw;
-    final length = math.sqrt(moveX * moveX + moveY * moveY + moveZ * moveZ);
-    if (length > 1) {
-      moveX /= length;
-      moveY /= length;
-      moveZ /= length;
-    }
-    final distance = _noclipSpeed * dt;
-    _eyePosition
-      ..x += moveX * distance
-      ..y += moveY * distance
-      ..z += moveZ * distance;
-    _eyePosition.y = _eyePosition.y
-        .clamp(1, WorldDims.worldBlocksY - 1)
-        .toDouble();
-    _reportMovementActivity();
-  }
-
-  double _axis(LogicalKeyboardKey positive, LogicalKeyboardKey negative) {
-    return (_keys.contains(positive) ? 1.0 : 0.0) -
-        (_keys.contains(negative) ? 1.0 : 0.0);
-  }
-
   void _toggleNoclip() {
-    _noclip = !_noclip;
-    _footstepCadence.reset();
-    _playerBody.velocity.setZero();
-    _playerBody.onGround = false;
-    if (_noclip) {
-      _playerBody.writeEyePosition(_eyePosition);
-    } else {
-      _playerBody.position.setValues(
-        _eyePosition.x,
-        _eyePosition.y - PlayerBody.eyeHeight,
-        _eyePosition.z,
-      );
-    }
+    _player.toggleNoclip();
+    hud.recordAction(_player.noclip ? 'noclip on' : 'noclip off');
   }
 
   void _setSpawnAtPlayer() {
-    if (_noclip) {
-      _spawnFeet.setValues(
-        _eyePosition.x,
-        _eyePosition.y - PlayerBody.eyeHeight,
-        _eyePosition.z,
-      );
-    } else {
-      _spawnFeet.setFrom(_playerBody.position);
-    }
+    _player.setSpawnAtPlayer();
     hud.recordAction('teleport saved');
   }
 
   void _respawnAtSavedPoint() {
-    _footstepCadence.reset();
-    _playerBody.position.setFrom(_spawnFeet);
-    _playerBody.velocity.setZero();
-    _playerBody.onGround = false;
-    _playerBody.writeEyePosition(_eyePosition);
+    _player.respawnAtSavedPoint();
     hud.recordAction('teleported');
   }
 }
 
-enum _BlockInteractionSource { capturedPointer, touchControls }
+enum _WorldInteractionSource { capturedPointer, touchControls }
+
+enum _GameLifecycle { created, loading, ready, failed, removing, removed }

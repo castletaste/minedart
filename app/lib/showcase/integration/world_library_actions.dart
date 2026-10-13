@@ -99,7 +99,8 @@ final class WorldLibraryActions {
           final bytes = switch (result) {
             WorldSessionSuccess<Uint8List>(:final value) => value,
             WorldSessionCancelled<Uint8List>() => null,
-            WorldSessionFailure<Uint8List>() => throw result,
+            WorldSessionFailure<Uint8List>() =>
+              throw WorldSessionException.fromFailure(result),
           };
           if (bytes == null || !session.host.isAttached) return;
           final fileName = '${_fileName(entry.name)}.mdrt';
@@ -130,9 +131,8 @@ final class WorldLibraryActions {
       await refresh();
     } catch (error) {
       if (result case WorldSessionFailure<void> failure) {
-        throw WorldSessionFailure<void>(
+        throw WorldSessionException(
           failure.error,
-          activeWorldChanged: failure.activeWorldChanged,
           durableStateChanged: failure.durableStateChanged,
           cleanupErrors: [...failure.cleanupErrors, error],
         );
@@ -142,7 +142,9 @@ final class WorldLibraryActions {
     return switch (result) {
       WorldSessionSuccess<void>() => true,
       WorldSessionCancelled<void>() => false,
-      WorldSessionFailure<void>() => throw result,
+      WorldSessionFailure<void>() => throw WorldSessionException.fromFailure(
+        result,
+      ),
     };
   }
 

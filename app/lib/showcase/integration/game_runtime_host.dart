@@ -13,19 +13,23 @@ import 'world_session_coordinator.dart';
 /// Mounting acknowledgements live here; the session never retains a context.
 final class GameRuntimeHostController extends ChangeNotifier
     implements WorldSessionHost {
-  GameRuntimeHostController(WorldRuntime initial) : current = initial {
-    _visible.add(initial);
-  }
+  GameRuntimeHostController(WorldRuntime initial) : current = initial;
 
   WorldRuntime current;
-  final Set<WorldRuntime> _visible = {};
+  WorldRuntime? _candidate;
   final Set<WorldRuntime> _mounted = {};
   bool _attached = true;
   bool _foreground = true;
+  bool _currentVisible = true;
+
+  Iterable<WorldRuntime> get visibleRuntimes sync* {
+    if (_currentVisible) yield current;
+    if (_candidate case final candidate?) yield candidate;
+  }
 
   void setForeground(bool foreground) {
     _foreground = foreground;
-    for (final runtime in _visible) {
+    for (final runtime in visibleRuntimes) {
       runtime.game.setAppForeground(foreground);
       if (foreground) {
         runtime.pipeline.resumeDeadlines();
@@ -42,10 +46,13 @@ final class GameRuntimeHostController extends ChangeNotifier
   Future<void> stage(WorldSessionRuntime candidate) async {
     if (!_attached) throw StateError('Game host is detached');
     final runtime = candidate as WorldRuntime;
+    if (_candidate != null) {
+      throw StateError('A runtime candidate is already staged');
+    }
     runtime.game.pauseEngine();
     runtime.game.setAppForeground(_foreground);
     if (!_foreground) runtime.pipeline.pauseDeadlines();
-    _visible.add(runtime);
+    _candidate = runtime;
     notifyListeners();
     final error = await runtime.game.mountedReady;
     if (error != null) throw error;
@@ -54,15 +61,29 @@ final class GameRuntimeHostController extends ChangeNotifier
 
   @override
   void commit(WorldSessionRuntime candidate) {
-    current = candidate as WorldRuntime;
-    _visible.removeWhere((runtime) => !identical(runtime, current));
+    final runtime = candidate as WorldRuntime;
+    if (!identical(_candidate, runtime)) {
+      throw StateError('Runtime candidate is not staged');
+    }
+    current = runtime;
+    _candidate = null;
+    _currentVisible = true;
     if (_attached) notifyListeners();
   }
 
   @override
   Future<void> remove(WorldSessionRuntime runtime) async {
     final concrete = runtime as WorldRuntime;
-    if (_visible.remove(concrete) && _attached) notifyListeners();
+    var changed = false;
+    if (identical(_candidate, concrete)) {
+      _candidate = null;
+      changed = true;
+    }
+    if (identical(current, concrete) && _currentVisible) {
+      _currentVisible = false;
+      changed = true;
+    }
+    if (changed && _attached) notifyListeners();
     if (_mounted.contains(concrete)) {
       await concrete.game.removed;
     } else {
@@ -74,7 +95,7 @@ final class GameRuntimeHostController extends ChangeNotifier
   void detach() {
     if (!_attached) return;
     _attached = false;
-    for (final runtime in _visible) {
+    for (final runtime in visibleRuntimes) {
       if (!_mounted.contains(runtime)) runtime.game.disposeSessionResources();
     }
   }
@@ -109,7 +130,7 @@ final class _GameRuntimeHostState extends State<GameRuntimeHost> {
     listenable: widget.controller,
     builder: (context, _) => Stack(
       children: [
-        for (final runtime in widget.controller._visible)
+        for (final runtime in widget.controller.visibleRuntimes)
           _game(runtime, active: identical(runtime, widget.controller.current)),
       ],
     ),
@@ -216,6 +237,7 @@ final class _RuntimeViewState extends State<_RuntimeView> {
             kHudOverlayId: (_, game) => HudOverlay(
               hud: game.hud,
               frameMetrics: game.frameMetrics,
+              diagnostics: game.diagnostics.snapshot,
               touchControls: widget.active && widget.touchControls
                   ? TouchControls(
                       onMovement: (offset) => game.setTouchMovement(
