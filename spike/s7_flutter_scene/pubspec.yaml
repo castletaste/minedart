@@ -1,0 +1,46 @@
+name: s7_flutter_scene
+description: "Disposable spike: minedart voxel chunks rendered through flutter_scene."
+publish_to: 'none'
+version: 0.0.1
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flame: ^1.38.0
+  flame_3d:
+    path: ../../third_party/flame_3d
+  flutter_scene: 0.24.3
+  hooks: ^2.2.0
+  minedart_core:
+    path: ../../packages/core
+  vector_math: ^2.1.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  assets:
+    - data/
+    - assets/shaders/
+    - flutter_scene_generated/
+    - path: flutter_scene_generated/metal_ios/
+      platforms:
+        - ios
+    - path: flutter_scene_generated/metal_desktop/
+      platforms:
+        - macos
+    - path: flutter_scene_generated/opengl_es_vulkan/
+      platforms:
+        - android
+        - linux
+        - windows
+    - path: flutter_scene_generated/opengl_es/
+      platforms:
+        - web
+  uses-material-design: true
