@@ -20,18 +20,20 @@ void main() {
     );
     final diagnostics =
         DiagnosticsCollector(
-          budget: const ResourceBudget(
-            maxPendingMeshJobs: 2,
-            maxRetainedMeshBytes: 100,
-            maxRetainedComponents: 3,
-          ),
-        )..updateState(
-          sessionEpoch: 4,
-          sessionBusy: true,
-          inputActive: true,
-          rendererReady: true,
-          activeChunks: 5,
-        )..updatePerformance(telemetry.snapshot());
+            budget: const ResourceBudget(
+              maxPendingMeshJobs: 2,
+              maxRetainedMeshBytes: 100,
+              maxRetainedComponents: 3,
+            ),
+          )
+          ..updateState(
+            sessionEpoch: 4,
+            sessionBusy: true,
+            inputActive: true,
+            rendererReady: true,
+            activeChunks: 5,
+          )
+          ..updatePerformance(telemetry.snapshot());
 
     final snapshot = diagnostics.publish();
     expect(snapshot.health, DiagnosticsHealth.warning);
@@ -42,11 +44,7 @@ void main() {
 
   test('healthy snapshot is JSON stable for diagnostic exports', () {
     final diagnostics = DiagnosticsCollector()
-      ..updateState(
-        inputActive: true,
-        rendererReady: true,
-        activeChunks: 8,
-      );
+      ..updateState(inputActive: true, rendererReady: true, activeChunks: 8);
     final snapshot = diagnostics.publish();
     expect(snapshot.health, DiagnosticsHealth.healthy);
     expect(snapshot.encode(), contains('"health":"healthy"'));

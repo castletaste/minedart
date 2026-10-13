@@ -7,10 +7,9 @@ import 'resource_budget.dart';
 
 /// Allocation-stable runtime diagnostics with a throttled immutable boundary.
 final class DiagnosticsCollector {
-  DiagnosticsCollector({
-    this.budget = const ResourceBudget(),
-  }) : _persistence = FixedCapacitySampleRing(capacity: 32),
-       snapshot = ValueNotifier<DiagnosticsSnapshot>(DiagnosticsSnapshot.empty);
+  DiagnosticsCollector({this.budget = const ResourceBudget()})
+    : _persistence = FixedCapacitySampleRing(capacity: 32),
+      snapshot = ValueNotifier<DiagnosticsSnapshot>(DiagnosticsSnapshot.empty);
 
   final ResourceBudget budget;
   final FixedCapacitySampleRing _persistence;
@@ -25,8 +24,7 @@ final class DiagnosticsCollector {
   bool _storageReady = true;
   int _activeChunks = 0;
 
-  void recordPersistence(double milliseconds) =>
-      _persistence.add(milliseconds);
+  void recordPersistence(double milliseconds) => _persistence.add(milliseconds);
 
   /// Supplies the already-published performance model instead of maintaining
   /// a second frame/mesh telemetry ring inside diagnostics.

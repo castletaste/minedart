@@ -171,10 +171,7 @@ final class ChunkRenderManager {
           aabb: _newChunkLocalAabb(),
         ),
       );
-    return _DistanceCulledMeshComponent(
-      mesh: mesh,
-      position: position.clone(),
-    );
+    return _DistanceCulledMeshComponent(mesh: mesh, position: position.clone());
   }
 
   bool _isInRange(int chunkIndex) {
@@ -232,10 +229,7 @@ final class _ChunkComponents {
 }
 
 final class _DistanceCulledMeshComponent extends MeshComponent {
-  _DistanceCulledMeshComponent({
-    required super.mesh,
-    required super.position,
-  });
+  _DistanceCulledMeshComponent({required super.mesh, required super.position});
 
   bool distanceVisible = true;
 

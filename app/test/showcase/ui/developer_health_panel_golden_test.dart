@@ -26,7 +26,8 @@ void main() {
         inputActive: true,
         rendererReady: true,
         activeChunks: 12,
-      )..updatePerformance(telemetry.snapshot());
+      )
+      ..updatePerformance(telemetry.snapshot());
     final snapshot = collector.publish();
 
     await tester.pumpWidget(

@@ -25,7 +25,6 @@ void main() {
       matchesGoldenFile('goldens/pause_options.png'),
     );
   });
-
 }
 
 Widget _surface(Widget child) => MaterialApp(
