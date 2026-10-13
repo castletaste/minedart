@@ -28,11 +28,11 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Set up Flutter 3.44.9
+      - name: Set up Flutter 3.47.7
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
         with:
           channel: stable
-          flutter-version: 3.44.9
+          flutter-version: 3.47.7
           cache: false
           pub-cache: false
 

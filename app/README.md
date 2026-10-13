@@ -6,8 +6,7 @@ not part of this build.
 
 ## Local run
 
-The repository `.fvmrc` selects the locally working stable SDK; CI pins
-Flutter 3.44.4 exactly.
+The repository `.fvmrc` and CI both pin Flutter 3.47.7 exactly.
 
 ```sh
 fvm flutter pub get --enforce-lockfile
@@ -45,7 +44,7 @@ the static delivery path.
 
 ## Build the web release
 
-Use Flutter 3.44.4, then run from this directory:
+Use Flutter 3.47.7, then run from this directory:
 
 ```sh
 flutter pub get --enforce-lockfile
