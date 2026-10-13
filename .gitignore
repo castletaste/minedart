@@ -5,4 +5,5 @@
 **/.flutter-plugins-dependencies
 **/build/
 **/coverage/
+qa-baselines/
 **/screenlog.*

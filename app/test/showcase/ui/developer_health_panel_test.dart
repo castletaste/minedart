@@ -25,7 +25,8 @@ void main() {
         inputActive: true,
         rendererReady: true,
         activeChunks: 9,
-      )..updatePerformance(telemetry.snapshot());
+      )
+      ..updatePerformance(telemetry.snapshot());
     final text = formatDeveloperHealth(collector.publish());
 
     expect(text, contains('health HEALTHY'));

@@ -137,13 +137,12 @@ class MeshPipeline implements MeshPipelineBase {
 
     final generation = job.snapshot.revision;
     final work = _workByChunk[job.chunkIndex];
-    final latest = work?.latest?.snapshot.revision ??
+    final latest =
+        work?.latest?.snapshot.revision ??
         _queue.latestGenerationFor(job.chunkIndex);
     if (latest != null && generation <= latest) return;
-    final current = work ?? _workByChunk.putIfAbsent(
-      job.chunkIndex,
-      _ChunkWork.new,
-    );
+    final current =
+        work ?? _workByChunk.putIfAbsent(job.chunkIndex, _ChunkWork.new);
     current.latest = job;
 
     if (_runningPhysicalIdByChunk.containsKey(job.chunkIndex)) {
@@ -567,7 +566,7 @@ class MeshPipeline implements MeshPipelineBase {
   bool _isLatest(MeshJob job) =>
       job.token?.isCancelled != true &&
       (_workByChunk[job.chunkIndex]?.latest?.snapshot.revision ??
-          _queue.latestGenerationFor(job.chunkIndex)) ==
+              _queue.latestGenerationFor(job.chunkIndex)) ==
           job.snapshot.revision;
 
   void _armDeadline(_RunningJob running) {
