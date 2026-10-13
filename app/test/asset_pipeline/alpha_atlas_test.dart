@@ -246,11 +246,12 @@ void main() {
       final originY = (index >> 4) * 16;
       for (var y = 0; y < 16; y++) {
         for (var x = 0; x < 16; x++) {
-          expect(
-            _rgba(atlas.getPixel(originX + x, originY + y)),
-            (0, 0, 0, 0),
-            reason: 'unused tile $index pixel ($x,$y)',
-          );
+          expect(_rgba(atlas.getPixel(originX + x, originY + y)), (
+            0,
+            0,
+            0,
+            0,
+          ), reason: 'unused tile $index pixel ($x,$y)');
         }
       }
     }
@@ -565,11 +566,12 @@ void main() {
         final originY = (index >> 4) * 16;
         for (var y = 0; y < 16; y++) {
           for (var x = 0; x < 16; x++) {
-            expect(
-              _rgba(legacy.getPixel(originX + x, originY + y)),
-              (0, 0, 0, 0),
-              reason: 'legacy unused tile $index pixel ($x,$y)',
-            );
+            expect(_rgba(legacy.getPixel(originX + x, originY + y)), (
+              0,
+              0,
+              0,
+              0,
+            ), reason: 'legacy unused tile $index pixel ($x,$y)');
           }
         }
       }

@@ -1,10 +1,10 @@
 # Vendored flame_3d provenance
 
 - Package: `flame_3d`
-- Version: `0.3.0`
+- Version: `0.3.2`
 - Source: hosted package from `https://pub.dev`
-- Pub package SHA-256: `45310da41e63a690d79514b24f890b28251c3066aa0986db29ef48283541af0a`
-- Imported: `2026-08-25`
+- Pub package SHA-256: `85dbda518b7a17628a898e39b2cc2f37f6e3bb69106b88e96de506c2b3696354`
+- Imported: `2026-10-13` (rebased from 0.3.0, first imported `2026-08-25`)
 - Upstream license: MIT; retained byte-for-byte in `LICENSE`
 
 `UPSTREAM_MANIFEST.sha256` records all 179 files from the exact hosted package,
@@ -50,7 +50,8 @@ Keep this list sorted. It is the machine-readable source of truth used by
 ## Purpose of the allowed changes
 
 - `pubspec.yaml` removes `resolution: workspace`, and the analysis/dev setup is
-  standalone for this repository.
+  standalone for this repository. The analysis options keep upstream's
+  platform-directory excludes on top of `flutter_lints`.
 - Generic shader/device/backend files carry stable uniform identity and
   monotonic byte-content revision metadata. The native FlutterGPU backend only
   accepts and ignores those optional parameters.
@@ -67,7 +68,7 @@ Keep this list sorted. It is the machine-readable source of truth used by
 
 ## Verification routes
 
-From this directory with Flutter 3.44.9:
+From this directory with Flutter 3.47.7:
 
 ```sh
 flutter pub get

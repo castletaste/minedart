@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 const _allowlistStart = '<!-- BEGIN INTENTIONAL CHANGE ALLOWLIST -->';
 const _allowlistEnd = '<!-- END INTENTIONAL CHANGE ALLOWLIST -->';
 const _upstreamPackageSha256 =
-    '45310da41e63a690d79514b24f890b28251c3066aa0986db29ef48283541af0a';
+    '85dbda518b7a17628a898e39b2cc2f37f6e3bb69106b88e96de506c2b3696354';
 
 const _generatedFileNames = <String>{
   '.flutter-plugins-dependencies',
