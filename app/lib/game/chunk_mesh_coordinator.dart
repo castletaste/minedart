@@ -5,6 +5,7 @@ import 'package:minedart_core/minedart_core.dart';
 import '../pipeline/mesh_pipeline.dart';
 import '../pipeline/mesh_request_queue.dart';
 import '../render/chunk_render_manager.dart';
+import 'chunk_view_planner.dart';
 
 typedef MeshFailureObserver =
     void Function(Object error, StackTrace stackTrace);
@@ -43,8 +44,12 @@ final class ChunkMeshCoordinator {
   final MainThreadMeshTimeObserver _onMainThreadMeshTime;
   final MeshFailureObserver _onFailure;
 
-  final Map<int, int> _generations = <int, int>{};
-  final Set<int> _requested = <int>{};
+  /// Keeps the generation watermark and the active ownership flag together.
+  /// A completed request remains in the map so a late result cannot restart an
+  /// old generation, while [requested] says whether the chunk is still owned
+  /// by the current view.
+  final Map<int, _ChunkRequestState> _requests =
+      <int, _ChunkRequestState>{};
   final MeshRequestQueue _pendingCaptures = MeshRequestQueue(maxRetries: 1);
   final Stopwatch _captureStopwatch = Stopwatch();
   final Stopwatch _applyStopwatch = Stopwatch();
@@ -56,9 +61,7 @@ final class ChunkMeshCoordinator {
   double _playerX = 0;
   double _playerY = 0;
   double _playerZ = 0;
-  int _viewChunkX = -1;
-  int _viewChunkZ = -1;
-  int _renderDistanceChunks = 6;
+  ChunkViewPlan? _viewPlan;
 
   int get pendingCount =>
       _pipeline.pendingCount + _pendingCaptures.pendingCount;
@@ -89,44 +92,43 @@ final class ChunkMeshCoordinator {
     _playerX = playerX;
     _playerY = playerY;
     _playerZ = playerZ;
-    final nextDistance = renderDistanceChunks.clamp(2, WorldDims.worldChunksX);
-    final cx = (playerX ~/ WorldDims.chunkSize).clamp(
-      0,
-      WorldDims.worldChunksX - 1,
+    final plan = ChunkViewPlanner.plan(
+      playerX: playerX,
+      playerZ: playerZ,
+      renderDistanceChunks: renderDistanceChunks,
     );
-    final cz = (playerZ ~/ WorldDims.chunkSize).clamp(
-      0,
-      WorldDims.worldChunksZ - 1,
-    );
-    if (!force &&
-        cx == _viewChunkX &&
-        cz == _viewChunkZ &&
-        nextDistance == _renderDistanceChunks) {
+    if (!force && _viewPlan?.sameView(plan) == true) {
       return;
     }
-    _viewChunkX = cx;
-    _viewChunkZ = cz;
-    _renderDistanceChunks = nextDistance;
+    _viewPlan = plan;
     if (_deferSnapshotCapture) {
-      _pendingCaptures.setPriorityOrigin(x: cx, y: 0, z: cz);
+      _pendingCaptures.setPriorityOrigin(
+        x: plan.centerX,
+        y: 0,
+        z: plan.centerZ,
+      );
     }
     _chunks.updateVisibility(
       playerX: playerX,
       playerZ: playerZ,
-      renderDistanceChunks: nextDistance,
+      renderDistanceChunks: plan.renderDistanceChunks,
     );
-    _chunks.evictOutsideView(onEvicted: _requested.remove);
+    _chunks.evictOutsideView(onEvicted: _cancelChunk);
+    // A request may still be in the mesh pipeline before its first component
+    // exists, so renderer eviction alone cannot cancel it.
+    for (final entry in _requests.entries.toList()) {
+      if (!entry.value.requested) continue;
+      final index = entry.key;
+      final chunk = _world.chunks[index];
+      if (!_isChunkInView(chunk.cx, chunk.cz)) _cancelChunk(index);
+    }
 
-    final minX = (cx - nextDistance).clamp(0, WorldDims.worldChunksX - 1);
-    final maxX = (cx + nextDistance).clamp(0, WorldDims.worldChunksX - 1);
-    final minZ = (cz - nextDistance).clamp(0, WorldDims.worldChunksZ - 1);
-    final maxZ = (cz + nextDistance).clamp(0, WorldDims.worldChunksZ - 1);
-    for (var chunkZ = minZ; chunkZ <= maxZ; chunkZ++) {
-      for (var chunkX = minX; chunkX <= maxX; chunkX++) {
+    for (var chunkZ = plan.minZ; chunkZ <= plan.maxZ; chunkZ++) {
+      for (var chunkX = plan.minX; chunkX <= plan.maxX; chunkX++) {
         for (var chunkY = 0; chunkY < WorldDims.worldChunksY; chunkY++) {
           final index = VoxelWorld.chunkIndexOf(chunkX, chunkY, chunkZ);
           final chunk = _world.chunks[index];
-          if (chunk.isEmpty || !_requested.add(index)) continue;
+          if (chunk.isEmpty || !_claimChunk(index)) continue;
           _requestChunk(chunk);
         }
       }
@@ -144,7 +146,7 @@ final class ChunkMeshCoordinator {
     _playerY = playerY;
     _playerZ = playerZ;
     for (final index in dirtyChunks) {
-      _requested.add(index);
+      _markChunkRequested(index);
       _requestChunk(_world.chunks[index]);
     }
   }
@@ -163,20 +165,28 @@ final class ChunkMeshCoordinator {
         final request = _pendingCaptures.takeNext();
         if (request == null) break;
         attempted = true;
+        final state = _requests[request.chunkIndex];
+        if (state == null ||
+            !state.requested ||
+            state.generation != request.generation) {
+          _pendingCaptures.complete(request);
+          continue;
+        }
         if (!_isChunkInView(request.chunkX, request.chunkZ)) {
           _pendingCaptures.complete(request);
-          _requested.remove(request.chunkIndex);
+          _cancelChunk(request.chunkIndex);
           continue;
         }
         try {
           _submitSnapshot(
             _world.chunks[request.chunkIndex],
             request.generation,
+            token: state.token,
           );
         } on Object catch (error, stackTrace) {
           final outcome = _pendingCaptures.fail(request);
           if (outcome == MeshFailureOutcome.retryLimitReached) {
-            _requested.remove(request.chunkIndex);
+            _deactivateChunk(request.chunkIndex, request.generation);
             _reportSubmissionFailure(
               chunkIndex: request.chunkIndex,
               generation: request.generation,
@@ -198,8 +208,15 @@ final class ChunkMeshCoordinator {
 
   void _requestChunk(Chunk chunk) {
     final index = VoxelWorld.chunkIndexOf(chunk.cx, chunk.cy, chunk.cz);
-    final generation = (_generations[index] ?? 0) + 1;
-    _generations[index] = generation;
+    final previous = _requests[index];
+    final generation = (previous?.generation ?? 0) + 1;
+    previous?.token?.cancel();
+    final token = MeshCancellationToken();
+    _requests[index] = _ChunkRequestState(
+      generation: generation,
+      token: token,
+      requested: true,
+    );
     if (_deferSnapshotCapture) {
       _pendingCaptures.request(
         chunkIndex: index,
@@ -211,9 +228,9 @@ final class ChunkMeshCoordinator {
       return;
     }
     try {
-      _submitSnapshot(chunk, generation);
+      _submitSnapshot(chunk, generation, token: token);
     } on Object catch (error, stackTrace) {
-      _requested.remove(index);
+      _deactivateChunk(index, generation);
       _reportSubmissionFailure(
         chunkIndex: index,
         generation: generation,
@@ -223,8 +240,13 @@ final class ChunkMeshCoordinator {
     }
   }
 
-  void _submitSnapshot(Chunk chunk, int generation) {
+  void _submitSnapshot(
+    Chunk chunk,
+    int generation, {
+    MeshCancellationToken? token,
+  }) {
     if (_closed) return;
+    final index = VoxelWorld.chunkIndexOf(chunk.cx, chunk.cy, chunk.cz);
     final dx = chunk.cx * WorldDims.chunkSize + 8.0 - _playerX;
     final dy = chunk.cy * WorldDims.chunkSize + 8.0 - _playerY;
     final dz = chunk.cz * WorldDims.chunkSize + 8.0 - _playerZ;
@@ -245,14 +267,19 @@ final class ChunkMeshCoordinator {
           skyHeight: captured.skyHeight,
         ),
         priority: dx * dx + dy * dy + dz * dz,
+        token: token ?? _requests[index]?.token,
       ),
     );
   }
 
   void _applyResult(ChunkMeshData data) {
     if (_closed) return;
+    final state = _requests[data.chunkIndex];
+    if (state?.generation != data.revision || state?.requested != true) {
+      return;
+    }
     if (!_chunks.isChunkInView(data.chunkIndex)) {
-      _requested.remove(data.chunkIndex);
+      _cancelChunk(data.chunkIndex);
       return;
     }
     _applyStopwatch
@@ -260,6 +287,7 @@ final class ChunkMeshCoordinator {
       ..start();
     try {
       _chunks.apply(data);
+      state!.token = null;
     } finally {
       _applyStopwatch.stop();
       if (!_closed) {
@@ -268,11 +296,14 @@ final class ChunkMeshCoordinator {
     }
   }
 
+  void _cancelChunk(int chunkIndex) {
+    _deactivateChunk(chunkIndex);
+  }
+
   void _handleFailure(Object error, StackTrace stackTrace) {
     if (_closed) return;
-    if (error is MeshPipelineFailure &&
-        _generations[error.chunkIndex] == error.generation) {
-      _requested.remove(error.chunkIndex);
+    if (error is MeshPipelineFailure) {
+      _deactivateChunk(error.chunkIndex, error.generation);
     }
     _onFailure(error, stackTrace);
   }
@@ -296,8 +327,37 @@ final class ChunkMeshCoordinator {
   }
 
   bool _isChunkInView(int chunkX, int chunkZ) =>
-      (chunkX - _viewChunkX).abs() <= _renderDistanceChunks &&
-      (chunkZ - _viewChunkZ).abs() <= _renderDistanceChunks;
+      _viewPlan?.containsChunk(chunkX, chunkZ) ?? false;
+
+  bool _claimChunk(int chunkIndex) {
+    final state = _requests[chunkIndex];
+    if (state?.requested == true) return false;
+    _markChunkRequested(chunkIndex);
+    return true;
+  }
+
+  void _markChunkRequested(int chunkIndex) {
+    final state = _requests[chunkIndex];
+    if (state == null) {
+      _requests[chunkIndex] = _ChunkRequestState(
+        generation: 0,
+        requested: true,
+      );
+    } else {
+      state.requested = true;
+    }
+  }
+
+  void _deactivateChunk(int chunkIndex, [int? generation]) {
+    final state = _requests[chunkIndex];
+    if (state == null ||
+        (generation != null && state.generation != generation)) {
+      return;
+    }
+    state.token?.cancel();
+    state.token = null;
+    state.requested = false;
+  }
 
   /// Stops callbacks immediately and awaits removal of the stream listener.
   ///
@@ -307,10 +367,26 @@ final class ChunkMeshCoordinator {
     final closing = _closing;
     if (closing != null) return closing;
     _closed = true;
+    for (final state in _requests.values) {
+      state.token?.cancel();
+    }
+    _requests.clear();
     _pipeline.onMainThreadMeshTime = null;
     _pendingCaptures.dispose();
     final subscription = _resultSubscription;
     _resultSubscription = null;
     return _closing = subscription?.cancel() ?? Future<void>.value();
   }
+}
+
+final class _ChunkRequestState {
+  _ChunkRequestState({
+    required this.generation,
+    required this.requested,
+    this.token,
+  });
+
+  final int generation;
+  MeshCancellationToken? token;
+  bool requested;
 }

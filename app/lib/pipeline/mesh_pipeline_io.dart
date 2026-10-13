@@ -70,10 +70,7 @@ class MeshPipeline implements MeshPipelineBase {
   final MeshRequestQueue _queue = MeshRequestQueue(maxRetries: _maxJobRetries);
   final StreamController<ChunkMeshData> _results =
       StreamController<ChunkMeshData>.broadcast();
-  final Map<int, MeshJob> _latestJobs = <int, MeshJob>{};
-  final Map<int, MeshJob> _queuedJobs = <int, MeshJob>{};
-  final Map<int, MeshJob> _deferredJobs = <int, MeshJob>{};
-  final Map<int, int> _latestGenerations = <int, int>{};
+  final Map<int, _ChunkWork> _workByChunk = <int, _ChunkWork>{};
   final Map<int, _RunningJob> _runningByPhysicalId = <int, _RunningJob>{};
   final Map<int, int> _runningPhysicalIdByChunk = <int, int>{};
 
@@ -102,8 +99,13 @@ class MeshPipeline implements MeshPipelineBase {
   Stream<ChunkMeshData> get results => _results.stream;
 
   @override
-  int get pendingCount =>
-      _queue.pendingCount + _runningByPhysicalId.length + _deferredJobs.length;
+  int get pendingCount {
+    var deferred = 0;
+    for (final work in _workByChunk.values) {
+      if (work.deferred != null) deferred++;
+    }
+    return _queue.pendingCount + _runningByPhysicalId.length + deferred;
+  }
 
   @override
   Future<void> start() {
@@ -126,6 +128,7 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   void request(MeshJob job) {
+    if (job.token?.isCancelled == true) return;
     if (_lifecycle == _Lifecycle.faulted) {
       _rejectWithoutWorkers(job);
       return;
@@ -133,13 +136,18 @@ class MeshPipeline implements MeshPipelineBase {
     if (_lifecycle != _Lifecycle.running) return;
 
     final generation = job.snapshot.revision;
-    final latest = _latestGenerations[job.chunkIndex];
+    final work = _workByChunk[job.chunkIndex];
+    final latest = work?.latest?.snapshot.revision ??
+        _queue.latestGenerationFor(job.chunkIndex);
     if (latest != null && generation <= latest) return;
-    _latestGenerations[job.chunkIndex] = generation;
-    _latestJobs[job.chunkIndex] = job;
+    final current = work ?? _workByChunk.putIfAbsent(
+      job.chunkIndex,
+      _ChunkWork.new,
+    );
+    current.latest = job;
 
     if (_runningPhysicalIdByChunk.containsKey(job.chunkIndex)) {
-      _deferredJobs[job.chunkIndex] = job;
+      current.deferred = job;
     } else {
       _enqueue(job);
     }
@@ -166,11 +174,6 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   Future<void> close() => _closeFuture ??= _close();
-
-  @override
-  void dispose() {
-    unawaited(close());
-  }
 
   Future<void> _startWorkers() async {
     try {
@@ -284,9 +287,16 @@ class MeshPipeline implements MeshPipelineBase {
       if (!slot.isHealthy || slot.activePhysicalJobId != null) continue;
       final request = _takeNextRunnable();
       if (request == null) break;
-      final job = _queuedJobs[request.chunkIndex];
-      if (job == null || job.snapshot.revision != request.generation) {
+      final job = _workByChunk[request.chunkIndex]?.queued;
+      if (job == null ||
+          job.snapshot.revision != request.generation ||
+          job.token?.isCancelled == true) {
         _queue.complete(request);
+        final work = _workByChunk[request.chunkIndex];
+        if (work != null) {
+          work.queued = null;
+          _discardIdleWork(request.chunkIndex);
+        }
         continue;
       }
 
@@ -359,9 +369,9 @@ class MeshPipeline implements MeshPipelineBase {
   void _completeAttempt(_RunningJob running, ChunkMeshData data) {
     final isCurrent = _isLatest(running.job);
     _queue.complete(running.request);
-    _queuedJobs.remove(running.job.chunkIndex);
-    if (isCurrent) {
-      _latestJobs.remove(running.job.chunkIndex);
+    _workByChunk[running.job.chunkIndex]?.queued = null;
+    if (isCurrent && running.job.token?.isCancelled != true) {
+      _workByChunk[running.job.chunkIndex]?.latest = null;
       if (_lifecycle == _Lifecycle.running && !_results.isClosed) {
         _results.add(data);
       }
@@ -378,7 +388,7 @@ class MeshPipeline implements MeshPipelineBase {
   }) {
     if (!_isLatest(running.job)) {
       _queue.complete(running.request);
-      _queuedJobs.remove(running.job.chunkIndex);
+      _workByChunk[running.job.chunkIndex]?.queued = null;
       _promoteDeferred(running.job.chunkIndex);
       _pump();
       return;
@@ -389,8 +399,10 @@ class MeshPipeline implements MeshPipelineBase {
       case MeshFailureOutcome.retryScheduled:
         _pump();
       case MeshFailureOutcome.retryLimitReached:
-        _queuedJobs.remove(running.job.chunkIndex);
-        _latestJobs.remove(running.job.chunkIndex);
+        final work = _workByChunk[running.job.chunkIndex];
+        work
+          ?..queued = null
+          ..latest = null;
         _emitFailure(
           running.job,
           kind: kind,
@@ -486,22 +498,24 @@ class MeshPipeline implements MeshPipelineBase {
       return;
     }
     _lifecycle = _Lifecycle.faulted;
-    for (final job in _latestJobs.values.toList()) {
-      _emitFailure(
-        job,
-        kind: MeshPipelineFailureKind.workerUnavailable,
-        cause: cause,
-        stackTrace: stackTrace,
-      );
+    for (final work in _workByChunk.values.toList()) {
+      final job = work.latest;
+      if (job != null) {
+        _emitFailure(
+          job,
+          kind: MeshPipelineFailureKind.workerUnavailable,
+          cause: cause,
+          stackTrace: stackTrace,
+        );
+      }
     }
-    _clearWork();
+    _clearWork(disposeQueue: false);
   }
 
   void _rejectWithoutWorkers(MeshJob job) {
     final generation = job.snapshot.revision;
-    final latest = _latestGenerations[job.chunkIndex];
+    final latest = _queue.latestGenerationFor(job.chunkIndex);
     if (latest != null && generation <= latest) return;
-    _latestGenerations[job.chunkIndex] = generation;
     _emitFailure(
       job,
       kind: MeshPipelineFailureKind.workerUnavailable,
@@ -535,18 +549,26 @@ class MeshPipeline implements MeshPipelineBase {
       chunkZ: 0,
       generation: job.snapshot.revision,
     );
-    if (accepted) _queuedJobs[job.chunkIndex] = job;
-  }
-
-  void _promoteDeferred(int chunkIndex) {
-    final deferred = _deferredJobs.remove(chunkIndex);
-    if (deferred != null && _lifecycle == _Lifecycle.running) {
-      _enqueue(deferred);
+    if (accepted) {
+      _workByChunk.putIfAbsent(job.chunkIndex, _ChunkWork.new).queued = job;
     }
   }
 
+  void _promoteDeferred(int chunkIndex) {
+    final work = _workByChunk[chunkIndex];
+    final deferred = work?.deferred;
+    work?.deferred = null;
+    if (deferred != null && _lifecycle == _Lifecycle.running) {
+      _enqueue(deferred);
+    }
+    _discardIdleWork(chunkIndex);
+  }
+
   bool _isLatest(MeshJob job) =>
-      _latestGenerations[job.chunkIndex] == job.snapshot.revision;
+      job.token?.isCancelled != true &&
+      (_workByChunk[job.chunkIndex]?.latest?.snapshot.revision ??
+          _queue.latestGenerationFor(job.chunkIndex)) ==
+          job.snapshot.revision;
 
   void _armDeadline(_RunningJob running) {
     if (_deadlinesPaused || running.deadlineTimer != null) return;
@@ -607,16 +629,29 @@ class MeshPipeline implements MeshPipelineBase {
     _lifecycle = _Lifecycle.closed;
   }
 
-  void _clearWork() {
+  void _clearWork({bool disposeQueue = true}) {
     for (final running in _runningByPhysicalId.values) {
       running.cancelDeadline();
     }
     _runningByPhysicalId.clear();
     _runningPhysicalIdByChunk.clear();
-    _queuedJobs.clear();
-    _deferredJobs.clear();
-    _latestJobs.clear();
-    _queue.dispose();
+    _workByChunk.clear();
+    if (disposeQueue) {
+      _queue.dispose();
+    } else {
+      _queue.clearActive();
+    }
+  }
+
+  void _discardIdleWork(int chunkIndex) {
+    final work = _workByChunk[chunkIndex];
+    if (work != null &&
+        work.latest == null &&
+        work.queued == null &&
+        work.deferred == null &&
+        !_runningPhysicalIdByChunk.containsKey(chunkIndex)) {
+      _workByChunk.remove(chunkIndex);
+    }
   }
 
   static int _priorityCoordinate(double priority) {
@@ -630,6 +665,12 @@ class MeshPipeline implements MeshPipelineBase {
     }
     return scaled.round();
   }
+}
+
+final class _ChunkWork {
+  MeshJob? latest;
+  MeshJob? queued;
+  MeshJob? deferred;
 }
 
 final class _RunningJob {

@@ -744,10 +744,6 @@ final class _Pipeline implements MeshPipelineBase {
     if (closeError case final error?) throw error;
   }
 
-  @override
-  void dispose() {
-    unawaited(close());
-  }
 }
 
 /// Registers a backend so constructing a real Flame game stays GPU-free.

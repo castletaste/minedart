@@ -254,6 +254,12 @@ final class MeshRequestQueue {
   bool isLatestGeneration(int chunkIndex, int generation) =>
       !_disposed && _latestGenerations[chunkIndex] == generation;
 
+  /// Returns the newest generation accepted for [chunkIndex]. Completed and
+  /// failed requests remain as watermarks, so a pipeline can reuse this queue
+  /// instead of maintaining a second generation map.
+  int? latestGenerationFor(int chunkIndex) =>
+      _disposed ? null : _latestGenerations[chunkIndex];
+
   /// Whether [request] is the current in-flight attempt.
   bool isCurrent(MeshRequest request) =>
       !_disposed && _currentInFlightEntry(request) != null;
@@ -292,6 +298,19 @@ final class MeshRequestQueue {
     _heap.clear();
     _entries.clear();
     _latestGenerations.clear();
+  }
+
+  /// Clears active heap entries while retaining generation watermarks.
+  ///
+  /// A faulted pipeline uses this barrier before reporting that workers are
+  /// unavailable. Keeping the watermark prevents the same terminal generation
+  /// from producing duplicate failures while the owner decides whether to
+  /// close the pipeline.
+  void clearActive() {
+    if (_disposed) return;
+    _queuedCount = 0;
+    _heap.clear();
+    _entries.clear();
   }
 
   _QueueEntry? _currentInFlightEntry(MeshRequest request) {

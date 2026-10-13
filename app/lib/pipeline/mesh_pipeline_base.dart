@@ -48,11 +48,23 @@ final class MeshPipelineFailure implements Exception {
       'kind: $kind, cause: $cause)';
 }
 
+/// Cooperative cancellation shared by the coordinator and both pipeline
+/// implementations. Native workers may finish their current isolate call, but
+/// the result is dropped before it reaches the renderer.
+final class MeshCancellationToken {
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  void cancel() => _cancelled = true;
+}
+
 class MeshJob {
-  MeshJob({required this.snapshot, required this.priority});
+  MeshJob({required this.snapshot, required this.priority, this.token});
 
   final ChunkSnapshot snapshot;
   final double priority;
+  final MeshCancellationToken? token;
 
   int get chunkIndex =>
       VoxelWorld.chunkIndexOf(snapshot.cx, snapshot.cy, snapshot.cz);
@@ -74,9 +86,7 @@ abstract interface class MeshPipelineBase {
   /// Resumes watchdog time without charging suspended wall-clock duration.
   void resumeDeadlines();
 
-  /// Cancels outstanding work and completes after owned resources are closed.
+  /// Cancels outstanding work and completes after platform-owned resources
+  /// are closed. A paused result subscriber does not block shutdown.
   Future<void> close();
-
-  /// Compatibility trigger for owners that cannot await from synchronous code.
-  void dispose();
 }

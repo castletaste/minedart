@@ -8,6 +8,7 @@ export 'mesh_pipeline_base.dart'
         MeshJob,
         MeshPipelineActivity,
         MeshPipelineBase,
+        MeshCancellationToken,
         MeshPipelineFailure,
         MeshPipelineFailureKind;
 export 'mesh_pipeline_io.dart'

@@ -1,22 +1,27 @@
 import 'dart:typed_data';
-import 'dart:ui' show Canvas;
-
 import 'package:flame_3d/camera.dart';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:minedart_core/minedart_core.dart';
 
+import '../diagnostics/resource_budget.dart';
 import 'packed_surface.dart';
 
 /// Owns up to two render components for every voxel chunk.
 final class ChunkRenderManager {
-  ChunkRenderManager({required World3D world, required Material material})
+  ChunkRenderManager({
+    required World3D world,
+    required Material material,
+    this.resourceBudget = const ResourceBudget(),
+  })
     // The public constructor intentionally exposes readable argument names.
     // ignore: prefer_initializing_formals
     : _world = world,
-      // ignore: prefer_initializing_formals
-      _material = material;
+       // ignore: prefer_initializing_formals
+       _material = material;
+
+  final ResourceBudget resourceBudget;
 
   final World3D _world;
   final Material _material;
@@ -33,6 +38,11 @@ final class ChunkRenderManager {
   int get visibleChunkCount => _visibleChunkCount;
   int get retainedComponentCount => _retainedComponentCount;
   int get retainedMeshBytes => _retainedMeshBytes;
+  ResourceBudgetStatus get budgetStatus => resourceBudget.evaluate(
+    pendingMeshJobs: 0,
+    retainedMeshBytes: _retainedMeshBytes,
+    retainedComponents: _retainedComponentCount,
+  );
   bool isChunkInView(int chunkIndex) => _isInRange(chunkIndex);
 
   /// Applies a cheap chunk-distance gate in addition to flame_3d's frustum
@@ -75,9 +85,17 @@ final class ChunkRenderManager {
     if (previousRevision != null && data.revision < previousRevision) {
       return;
     }
+    final nextMeshBytes =
+        data.opaqueVertices.lengthInBytes +
+        data.opaqueIndices.lengthInBytes +
+        data.translucentVertices.lengthInBytes +
+        data.translucentIndices.lengthInBytes;
+    final previous = _components[data.chunkIndex];
+    // Budgets are observability thresholds. Retaining a valid mesh is safer
+    // than silently dropping a visible chunk and leaving the scheduler with
+    // no way to retry it after memory becomes available.
     _revisions[data.chunkIndex] = data.revision;
 
-    final previous = _components[data.chunkIndex];
     if (previous?.distanceVisible ?? false) _visibleChunkCount--;
     if (previous != null) {
       _retainedComponentCount -= previous.componentCount;
@@ -101,19 +119,13 @@ final class ChunkRenderManager {
         vertices: data.opaqueVertices,
         indices: data.opaqueIndices,
         position: position,
-        opaquePass: true,
       ),
       translucent: _componentFor(
         vertices: data.translucentVertices,
         indices: data.translucentIndices,
         position: position,
-        opaquePass: false,
       ),
-      meshBytes:
-          data.opaqueVertices.lengthInBytes +
-          data.opaqueIndices.lengthInBytes +
-          data.translucentVertices.lengthInBytes +
-          data.translucentIndices.lengthInBytes,
+      meshBytes: nextMeshBytes,
     );
     _components[data.chunkIndex] = components;
     _retainedComponentCount += components.componentCount;
@@ -148,7 +160,6 @@ final class ChunkRenderManager {
     required Float32List vertices,
     required Uint16List indices,
     required Vector3 position,
-    required bool opaquePass,
   }) {
     if (indices.isEmpty) return null;
     final mesh = Mesh()
@@ -163,7 +174,6 @@ final class ChunkRenderManager {
     return _DistanceCulledMeshComponent(
       mesh: mesh,
       position: position.clone(),
-      opaquePass: opaquePass,
     );
   }
 
@@ -225,27 +235,9 @@ final class _DistanceCulledMeshComponent extends MeshComponent {
   _DistanceCulledMeshComponent({
     required super.mesh,
     required super.position,
-    required this.opaquePass,
   });
 
-  final bool opaquePass;
   bool distanceVisible = true;
-  final Matrix4 _opaqueSortTransform = Matrix4.identity()
-    ..setTranslationRaw(1000000, 1000000, 1000000);
-
-  /// flame_3d 0.3 sorts every object back-to-front in one alpha/depth pass.
-  /// Giving opaque chunk draws a stable large sort distance ensures the full
-  /// terrain depth/color buffer exists before water/glass are blended. The
-  /// actual draw still uses [worldTransformMatrix], so geometry is unchanged.
-  @override
-  void renderTree(Canvas canvas) {
-    final camera = CameraComponent3D.currentCamera;
-    if (camera == null || !isVisible(camera)) return;
-    world.context.submitDraw(
-      this,
-      opaquePass ? _opaqueSortTransform : worldTransformMatrix,
-    );
-  }
 
   @override
   bool isVisible(CameraComponent3D camera) =>

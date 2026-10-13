@@ -78,7 +78,7 @@ class MeshPipeline implements MeshPipelineBase {
 
   @override
   void request(MeshJob job) {
-    if (_disposed) return;
+    if (_disposed || job.token?.isCancelled == true) return;
 
     // The caller has already captured this snapshot. This stage coalesces the
     // captured jobs; pre-capture coalescing belongs to the later integration.
@@ -134,8 +134,11 @@ class MeshPipeline implements MeshPipelineBase {
 
   void _process(MeshRequest request) {
     final job = _jobs[request.chunkIndex];
-    if (job == null || job.snapshot.revision != request.generation) {
+    if (job == null ||
+        job.snapshot.revision != request.generation ||
+        job.token?.isCancelled == true) {
       _queue.complete(request);
+      if (job != null) _forgetJob(request.chunkIndex, request.generation);
       return;
     }
 
@@ -143,6 +146,11 @@ class MeshPipeline implements MeshPipelineBase {
     try {
       data = _meshChunk(job.snapshot);
     } on Object catch (error, stackTrace) {
+      if (job.token?.isCancelled == true) {
+        _queue.complete(request);
+        _forgetJob(request.chunkIndex, request.generation);
+        return;
+      }
       final outcome = _queue.fail(request);
       if (outcome == MeshFailureOutcome.retryLimitReached) {
         _forgetJob(request.chunkIndex, request.generation);
@@ -162,6 +170,11 @@ class MeshPipeline implements MeshPipelineBase {
     }
 
     // A re-entrant newer request or disposal makes this result stale.
+    if (job.token?.isCancelled == true) {
+      _queue.complete(request);
+      _forgetJob(request.chunkIndex, request.generation);
+      return;
+    }
     if (!_queue.complete(request)) return;
     _forgetJob(request.chunkIndex, request.generation);
     if (!_disposed && !_results.isClosed) _results.add(data);
@@ -175,8 +188,8 @@ class MeshPipeline implements MeshPipelineBase {
   }
 
   @override
-  void dispose() {
-    if (_disposed) return;
+  Future<void> close() {
+    if (_disposed) return Future<void>.value();
     _disposed = true;
     _scheduledDrain?.cancel();
     _scheduledDrain = null;
@@ -184,12 +197,9 @@ class MeshPipeline implements MeshPipelineBase {
     _jobs.clear();
     onMainThreadMeshTime = null;
     _sliceStopwatch.stop();
+    // A paused broadcast subscriber must not keep the web runtime waiting for
+    // shutdown. The controller still receives the close signal asynchronously.
     unawaited(_results.close());
-  }
-
-  @override
-  Future<void> close() {
-    dispose();
     return Future<void>.value();
   }
 
