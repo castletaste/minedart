@@ -20,7 +20,7 @@ void main() {
 
       pipeline.activity = MeshPipelineActivity.interactive;
       expect(pipeline.budgetMicroseconds, 1000);
-      pipeline.dispose();
+      unawaited(pipeline.close());
 
       pipeline.activity = MeshPipelineActivity.idle;
       expect(pipeline.activity, MeshPipelineActivity.interactive);
@@ -63,7 +63,7 @@ void main() {
         ]);
         expect(pipeline.pendingCount, 0);
 
-        pipeline.dispose();
+        unawaited(pipeline.close());
         expect((await results).map((mesh) => mesh.chunkIndex), <int>[
           7,
           3,
@@ -99,7 +99,7 @@ void main() {
 
         expect(attempts, <int>[1, 2, 1]);
         expect(pipeline.pendingCount, 0);
-        pipeline.dispose();
+        unawaited(pipeline.close());
         expect((await results).map((mesh) => mesh.chunkIndex), <int>[2, 1]);
       },
     );
@@ -154,8 +154,48 @@ void main() {
 
         expect(attempts, <int>[1, 2]);
         expect(pipeline.pendingCount, 0);
-        pipeline.dispose();
+        unawaited(pipeline.close());
         expect((await results).map((mesh) => mesh.revision), <int>[2]);
+      },
+    );
+
+    test(
+      'cancellation token drops queued and in-flight mesh results',
+      () async {
+        final scheduler = _ManualDrainScheduler();
+        final token = MeshCancellationToken();
+        final pipeline = MeshPipeline(
+          scheduleDrain: scheduler.schedule,
+          meshChunk: (snapshot) {
+            token.cancel();
+            return _emptyMesh(snapshot);
+          },
+        );
+        final results = pipeline.results.toList();
+
+        token.cancel();
+        pipeline.request(_job(index: 9, token: token));
+        expect(scheduler.pendingCount, 0);
+        scheduler.drain();
+        expect(pipeline.pendingCount, 0);
+        await pipeline.close();
+        expect(await results, isEmpty);
+
+        final runningScheduler = _ManualDrainScheduler();
+        final runningToken = MeshCancellationToken();
+        final runningPipeline = MeshPipeline(
+          scheduleDrain: runningScheduler.schedule,
+          meshChunk: (snapshot) {
+            runningToken.cancel();
+            return _emptyMesh(snapshot);
+          },
+        );
+        final runningResults = runningPipeline.results.toList();
+        runningPipeline.request(_job(index: 10, token: runningToken));
+        runningScheduler.drain();
+        expect(runningPipeline.pendingCount, 0);
+        await runningPipeline.close();
+        expect(await runningResults, isEmpty);
       },
     );
 
@@ -183,7 +223,7 @@ void main() {
       expect(scheduler.maximumPendingCount, 1);
 
       scheduler.drain();
-      pipeline.dispose();
+      unawaited(pipeline.close());
     });
 
     test('reports one non-negative main-thread timing per non-empty slice', () {
@@ -200,11 +240,11 @@ void main() {
 
       expect(timings, hasLength(1));
       expect(timings.single, isNonNegative);
-      pipeline.dispose();
+      unawaited(pipeline.close());
       expect(pipeline.onMainThreadMeshTime, isNull);
     });
 
-    test('disposal cancels scheduled work and is re-entrant safe', () async {
+    test('close cancels scheduled work and is re-entrant safe', () async {
       final scheduler = _ManualDrainScheduler();
       var attemptCount = 0;
       late MeshPipeline pipeline;
@@ -212,7 +252,7 @@ void main() {
         scheduleDrain: scheduler.schedule,
         meshChunk: (snapshot) {
           attemptCount++;
-          pipeline.dispose();
+          unawaited(pipeline.close());
           return _emptyMesh(snapshot);
         },
       );
@@ -220,7 +260,7 @@ void main() {
 
       pipeline.request(_job(index: 1));
       scheduler.runNext();
-      pipeline.dispose();
+      unawaited(pipeline.close());
       pipeline.request(_job(index: 2));
       scheduler.drain();
 
@@ -238,7 +278,7 @@ void main() {
       );
       canceledPipeline.request(_job(index: 3));
       expect(canceledScheduler.pendingCount, 1);
-      canceledPipeline.dispose();
+      unawaited(canceledPipeline.close());
       canceledScheduler.drain();
       expect(canceledPipeline.pendingCount, 0);
     });
@@ -254,18 +294,23 @@ void main() {
   });
 }
 
-MeshJob _job({required int index, int revision = 1, double priority = 0}) =>
-    MeshJob(
-      snapshot: ChunkSnapshot(
-        cx: index,
-        cy: 0,
-        cz: 0,
-        revision: revision,
-        blocks: Uint16List(ChunkSnapshot.volume),
-        skyHeight: Uint8List(ChunkSnapshot.skyArea),
-      ),
-      priority: priority,
-    );
+MeshJob _job({
+  required int index,
+  int revision = 1,
+  double priority = 0,
+  MeshCancellationToken? token,
+}) => MeshJob(
+  snapshot: ChunkSnapshot(
+    cx: index,
+    cy: 0,
+    cz: 0,
+    revision: revision,
+    blocks: Uint16List(ChunkSnapshot.volume),
+    skyHeight: Uint8List(ChunkSnapshot.skyArea),
+  ),
+  priority: priority,
+  token: token,
+);
 
 ChunkMeshData _emptyMesh(ChunkSnapshot snapshot) => ChunkMeshData(
   chunkIndex: snapshot.chunkIndex,

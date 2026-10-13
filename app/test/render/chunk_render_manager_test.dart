@@ -5,6 +5,7 @@ import 'package:flame_3d/components.dart';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:minedart/diagnostics/resource_budget.dart';
 import 'package:minedart/render/chunk_render_manager.dart';
 import 'package:minedart/render/packed_surface.dart';
 import 'package:minedart_core/minedart_core.dart';
@@ -230,6 +231,28 @@ void main() {
       expect(manager.loadedChunkCount, 1);
       expect(manager.retainedComponentCount, 1);
       expect(manager.retainedMeshBytes, _meshBytes(refreshed));
+    });
+
+    test('retains a mesh over the budget and exposes the threshold', () {
+      final voxelWorld = VoxelWorld()..setBlock(0, 0, 0, Blocks.stone);
+      final data = const ChunkMesher().mesh(
+        ChunkSnapshot.capture(voxelWorld, 0, 0, 0),
+      );
+      final renderWorld = World3D();
+      final manager = ChunkRenderManager(
+        world: renderWorld,
+        material: Material.defaultMaterial,
+        resourceBudget: ResourceBudget(
+          maxRetainedMeshBytes: _meshBytes(data) - 1,
+          maxRetainedComponents: 2,
+        ),
+      );
+
+      manager.apply(data);
+
+      expect(manager.loadedChunkCount, 1);
+      expect(manager.retainedMeshBytes, _meshBytes(data));
+      expect(manager.budgetStatus.exceeded, isTrue);
     });
   });
 }

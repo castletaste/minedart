@@ -177,6 +177,60 @@ void main() {
       expect(originJobs.last.snapshot.revision, 2);
     });
 
+    test('drops a late result from an older generation', () {
+      final world = VoxelWorld()..setBlock(0, 0, 0, Blocks.stone);
+      final pipeline = _FakePipeline();
+      final manager = ChunkRenderManager(
+        world: World3D(),
+        material: Material.defaultMaterial,
+      );
+      final coordinator = _coordinator(world, pipeline, chunks: manager)
+        ..start();
+      addTearDown(coordinator.close);
+      addTearDown(pipeline.close);
+
+      coordinator.updateView(
+        playerX: 0,
+        playerY: 0,
+        playerZ: 0,
+        renderDistanceChunks: 2,
+        force: true,
+      );
+      final first = pipeline.jobs.single;
+      coordinator.remeshDirty(<int>{0}, playerX: 0, playerY: 0, playerZ: 0);
+      final second = pipeline.jobs.last;
+
+      pipeline.emitSuccess(const ChunkMesher().mesh(first.snapshot));
+      expect(manager.retainedMeshBytes, 0);
+      pipeline.emitSuccess(const ChunkMesher().mesh(second.snapshot));
+      expect(manager.retainedMeshBytes, greaterThan(0));
+    });
+
+    test('cancels an outstanding mesh when its chunk leaves the view', () {
+      final world = VoxelWorld()..setBlock(0, 0, 0, Blocks.stone);
+      final pipeline = _FakePipeline();
+      final coordinator = _coordinator(world, pipeline)..start();
+      addTearDown(coordinator.close);
+      addTearDown(pipeline.close);
+
+      coordinator.updateView(
+        playerX: 0,
+        playerY: 0,
+        playerZ: 0,
+        renderDistanceChunks: 2,
+        force: true,
+      );
+      final token = pipeline.jobs.single.token;
+      coordinator.updateView(
+        playerX: 10 * WorldDims.chunkSize.toDouble(),
+        playerY: 0,
+        playerZ: 10 * WorldDims.chunkSize.toDouble(),
+        renderDistanceChunks: 2,
+      );
+
+      expect(token?.isCancelled, isTrue);
+    });
+
     test('bounds deferred submission failures and releases ownership', () {
       final world = VoxelWorld()..setBlock(0, 0, 0, Blocks.stone);
       final pipeline = _FakePipeline(failRequests: true);
@@ -346,9 +400,4 @@ final class _FakePipeline implements MeshPipelineBase {
 
   @override
   Future<void> close() => _results.close();
-
-  @override
-  void dispose() {
-    unawaited(close());
-  }
 }
