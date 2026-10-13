@@ -1,0 +1,68 @@
+material {
+  name: "VoxelOpaque",
+  shading_model: unlit,
+  blending: opaque,
+  culling: back,
+  depth_write: true,
+  parameters: [
+    { type: vec4, name: fog_color, default: [0.5098, 0.7843, 1.0, 1.0] },
+    { type: float, name: fog_start, default: 96 },
+    { type: float, name: fog_end, default: 160 },
+    { type: float, name: fog_density, default: 1 },
+    { type: float, name: baked_light_strength, default: 1 },
+    { type: int, name: debug_view, default: 0 },
+    { type: sampler2d, name: albedo_texture, hint: default_white },
+  ],
+}
+
+fragment {
+  // The minedart voxel shader works in display (sRGB) values. Linearize at
+  // the end so the engine's resolve pass reproduces the same pixel.
+  vec3 VoxelSrgbToLinear(vec3 c) {
+    vec3 lo = c / 12.92;
+    vec3 hi = pow((c + 0.055) / 1.055, vec3(2.4));
+    return mix(hi, lo, vec3(lessThanEqual(c, vec3(0.04045))));
+  }
+
+  void Surface(inout MaterialInputs material) {
+    vec4 texel = texture(albedo_texture, GetUV0());
+    vec4 vertex_color = GetVertexColor();
+    vec3 baked_light =
+        mix(vec3(1.0), vertex_color.rgb, material_params.baked_light_strength);
+    vec4 color = texel * vec4(baked_light, vertex_color.a);
+
+    // Alpha cutout: fully transparent texels must not write color or depth.
+    if (color.a < 0.5) {
+      discard;
+    }
+
+    int debug_view = material_params.debug_view;
+    if (debug_view == 1) {
+      color.rgb = texel.rgb;
+    } else if (debug_view == 2) {
+      color.rgb = normalize(GetWorldNormal()) * 0.5 + 0.5;
+    } else if (debug_view == 3) {
+      color.rgb = vec3(vertex_color.b);
+    } else if (debug_view == 4) {
+      color.rgb = vec3(vertex_color.r);
+    } else if (debug_view == 5) {
+      vec3 chunk_uv = fract(abs(GetWorldPosition()) / 16.0);
+      float edge =
+          1.0 - step(0.018, min(min(chunk_uv.x, chunk_uv.y), chunk_uv.z));
+      color.rgb = mix(color.rgb, vec3(1.0, 0.35, 0.05), edge);
+    } else if (debug_view == 6) {
+      color.rgb = vec3(0.85, 0.05, 0.75);
+    }
+    color.rgb = min(color.rgb, vec3(1.0));
+
+    highp float distance_to_camera = length(v_viewvector);
+    float fog = clamp(
+        (distance_to_camera - material_params.fog_start) /
+            (material_params.fog_end - material_params.fog_start),
+        0.0,
+        1.0) * material_params.fog_density;
+    color.rgb = mix(color.rgb, material_params.fog_color.rgb, fog);
+
+    material.base_color = vec4(VoxelSrgbToLinear(color.rgb), color.a);
+  }
+}
