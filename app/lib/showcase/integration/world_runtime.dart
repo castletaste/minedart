@@ -47,7 +47,7 @@ final class WorldRuntime implements WorldSessionRuntime {
       final spawn = document.metadata.spawn;
       game =
           (gameFactory?.call(world, pipeline, service, spawn) ??
-                MinedartGame(
+                MinedartGame.create(
                   world: world,
                   pipeline: pipeline,
                   input: service,

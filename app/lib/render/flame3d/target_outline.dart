@@ -3,9 +3,9 @@ import 'dart:ui';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/resources.dart';
 
+import '../packed_primitives.dart';
 import '../voxel_renderer.dart' show TargetOutlineControls;
 import 'packed_surface.dart';
-import 'packed_primitives.dart';
 
 /// A reusable one-slot target-outline pool for flame_3d 0.3.0.
 ///
@@ -21,25 +21,12 @@ final class TargetOutline extends MeshComponent
     double thickness = 0.018,
     double padding = 0.003,
   }) {
-    if (!thickness.isFinite || thickness <= 0 || thickness >= 0.25) {
-      throw ArgumentError.value(
-        thickness,
-        'thickness',
-        'must be finite and between 0 and 0.25',
-      );
-    }
-    if (!padding.isFinite || padding < 0 || padding >= 0.25) {
-      throw ArgumentError.value(
-        padding,
-        'padding',
-        'must be finite and between 0 and 0.25',
-      );
-    }
+    final geometry = targetOutlineGeometry(
+      thickness: thickness,
+      padding: padding,
+    );
     final effectiveMaterial = material ?? UnlitMaterial(albedoColor: color);
-    final mesh = _outlineGeometry(
-      thickness,
-      padding,
-    ).createMesh(effectiveMaterial);
+    final mesh = geometry.createMesh(effectiveMaterial);
     return TargetOutline._(
       mesh: mesh,
       material: effectiveMaterial,
@@ -112,42 +99,4 @@ final class TargetOutline extends MeshComponent
     if (!isShown) return;
     super.renderTree(canvas);
   }
-}
-
-PackedPrimitiveGeometry _outlineGeometry(double thickness, double padding) {
-  final half = thickness / 2;
-  final min = -padding;
-  final max = 1 + padding;
-  return PackedPrimitiveGeometry.cuboids(<PackedCuboid>[
-    for (final y in <double>[min, max])
-      for (final z in <double>[min, max])
-        PackedCuboid(
-          minX: min - half,
-          minY: y - half,
-          minZ: z - half,
-          maxX: max + half,
-          maxY: y + half,
-          maxZ: z + half,
-        ),
-    for (final x in <double>[min, max])
-      for (final z in <double>[min, max])
-        PackedCuboid(
-          minX: x - half,
-          minY: min - half,
-          minZ: z - half,
-          maxX: x + half,
-          maxY: max + half,
-          maxZ: z + half,
-        ),
-    for (final x in <double>[min, max])
-      for (final y in <double>[min, max])
-        PackedCuboid(
-          minX: x - half,
-          minY: y - half,
-          minZ: min - half,
-          maxX: x + half,
-          maxY: y + half,
-          maxZ: max + half,
-        ),
-  ]);
 }

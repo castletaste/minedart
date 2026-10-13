@@ -1,9 +1,6 @@
 import 'dart:typed_data';
 
-import 'package:flame_3d/resources.dart';
 import 'package:minedart_core/minedart_core.dart';
-
-import 'packed_surface.dart';
 
 /// Immutable bounds used by the small, eagerly-built showcase meshes.
 final class PackedCuboid {
@@ -63,11 +60,79 @@ final class PackedPrimitiveGeometry {
   int get vertexCount => _vertices.length ~/ VertexLayout.floatsPerVertex;
   int get indexCount => _indices.length;
 
-  Mesh createMesh(Material material) => Mesh()
-    ..addSurface(
-      PackedSurface(vertices: _vertices, indices: _indices, material: material),
-    );
+  /// Packed vertices in the `VertexLayout` mesh ABI.
+  Float32List get vertices => _vertices;
+  Uint16List get indices => _indices;
 }
+
+/// Twelve thin edge cuboids around a unit block, offset by [padding].
+PackedPrimitiveGeometry targetOutlineGeometry({
+  double thickness = 0.018,
+  double padding = 0.003,
+}) {
+  if (!thickness.isFinite || thickness <= 0 || thickness >= 0.25) {
+    throw ArgumentError.value(
+      thickness,
+      'thickness',
+      'must be finite and between 0 and 0.25',
+    );
+  }
+  if (!padding.isFinite || padding < 0 || padding >= 0.25) {
+    throw ArgumentError.value(
+      padding,
+      'padding',
+      'must be finite and between 0 and 0.25',
+    );
+  }
+  final half = thickness / 2;
+  final min = -padding;
+  final max = 1 + padding;
+  return PackedPrimitiveGeometry.cuboids(<PackedCuboid>[
+    for (final y in <double>[min, max])
+      for (final z in <double>[min, max])
+        PackedCuboid(
+          minX: min - half,
+          minY: y - half,
+          minZ: z - half,
+          maxX: max + half,
+          maxY: y + half,
+          maxZ: z + half,
+        ),
+    for (final x in <double>[min, max])
+      for (final z in <double>[min, max])
+        PackedCuboid(
+          minX: x - half,
+          minY: min - half,
+          minZ: z - half,
+          maxX: x + half,
+          maxY: max + half,
+          maxZ: z + half,
+        ),
+    for (final x in <double>[min, max])
+      for (final y in <double>[min, max])
+        PackedCuboid(
+          minX: x - half,
+          minY: y - half,
+          minZ: min - half,
+          maxX: x + half,
+          maxY: y + half,
+          maxZ: max + half,
+        ),
+  ]);
+}
+
+/// A unit cube centred on the origin, used for block particles.
+final PackedPrimitiveGeometry unitCubeGeometry =
+    PackedPrimitiveGeometry.cuboids(const <PackedCuboid>[
+      PackedCuboid(
+        minX: -0.5,
+        minY: -0.5,
+        minZ: -0.5,
+        maxX: 0.5,
+        maxY: 0.5,
+        maxZ: 0.5,
+      ),
+    ]);
 
 const _cuboidIndices = <int>[
   0, 2, 1, 0, 3, 2, // -Z

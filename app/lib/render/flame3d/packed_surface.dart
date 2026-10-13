@@ -5,6 +5,8 @@ import 'package:flame_3d/graphics.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:minedart_core/minedart_core.dart';
 
+import '../packed_primitives.dart';
+
 /// A [Surface] backed directly by the packed vertex layout produced by the
 /// voxel mesher. This bypasses Flame's per-[Vertex] normalization path.
 final class PackedSurface extends Surface {
@@ -134,4 +136,12 @@ Aabb3 _calculateAabb(Float32List vertices) {
     if (z > maxZ) maxZ = z;
   }
   return Aabb3.minMax(Vector3(minX, minY, minZ), Vector3(maxX, maxY, maxZ));
+}
+
+/// Builds a flame_3d mesh over the shared packed primitive buffers.
+extension PackedPrimitiveMesh on PackedPrimitiveGeometry {
+  Mesh createMesh(Material material) => Mesh()
+    ..addSurface(
+      PackedSurface(vertices: vertices, indices: indices, material: material),
+    );
 }

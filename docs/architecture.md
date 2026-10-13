@@ -141,14 +141,29 @@ passes through `ChunkPassFactory`; it has no engine types, so its tests use a
 recording fake. `RenderLabBridge` and `ShowcaseBootstrap` also depend on the
 port only.
 
-The flame_3d implementation lives in `app/lib/render/flame3d/` (packed
-surfaces, materials, outline, particles, chunk passes, camera and counters).
-`MinedartGame` is still a `FlameGame3D`: Flame owns the loop, lifecycle and
-input, and the game creates `Flame3dVoxelRenderer` in `onLoad`. That base
-class is the only flame_3d import outside the adapter directory, enforced by
-`test/render/renderer_boundary_test.dart`. Replacing the renderer means a
-second port implementation plus a host that is not a `FlameGame3D`; see
-`spike/s7_flutter_scene/REPORT.md` for the flutter_scene evaluation.
+The flame_3d implementation lives in `app/lib/render/flame3d/` and the
+experimental flutter_scene implementation in `app/lib/render/flutter_scene/`.
+Shared engine-neutral pieces stay in `app/lib/render/`: packed outline and
+cube primitives, and `BlockParticleSimulation`, which both renderers copy into
+their scene objects.
+
+`MinedartGame` is a mixin on `FlameGame`: Flame owns the loop, lifecycle and
+input for both renderers. `MinedartGame.create` picks one of two private hosts
+from the const `MINEDART_RENDERER` define, so release builds tree-shake the
+other:
+
+- the flame_3d host extends `FlameGame3D`, whose component tree draws the
+  world; it is the production default;
+- the flutter_scene host extends `FlameGame`, and its renderer draws the scene
+  into the game canvas from `VoxelRenderer.render`. flutter_scene is
+  left-handed, so the world hangs under a Z-mirror root node.
+
+`ShowcaseBootstrap` initializes the selected renderer through
+`initializeSelectedRenderer`. Import boundaries are enforced by
+`test/render/renderer_boundary_test.dart`: flame_3d only in its adapter and
+`minedart_game.dart` (host base class), flutter_scene only in its adapter.
+The flutter_scene evaluation and its open issues (no WebGPU backend in 0.24.3,
+GPU buffers released only by GC) are in `spike/s7_flutter_scene/REPORT.md`.
 
 ## Validation
 

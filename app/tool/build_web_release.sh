@@ -14,7 +14,9 @@ else
   exit 1
 fi
 
-"${flutter_cmd[@]}" build web --wasm --release --no-web-resources-cdn
+# Extra arguments (for example --dart-define=MINEDART_RENDERER=flutter_scene)
+# are passed through to flutter build.
+"${flutter_cmd[@]}" build web --wasm --release --no-web-resources-cdn "$@"
 
 # Flutter does not guarantee that dotfiles from web/ are copied to build/web.
 cp web/_headers build/web/_headers
@@ -45,29 +47,4 @@ if ! grep -Fq '"useLocalCanvasKit":true' build/web/flutter_bootstrap.js; then
   exit 1
 fi
 
-pages_file_limit=20000
-pages_asset_limit_bytes=26214400
-asset_count="$(find build/web -type f | wc -l | tr -d '[:space:]')"
-largest_size=0
-largest_file=""
-
-while IFS= read -r -d '' asset; do
-  asset_size="$(wc -c < "${asset}" | tr -d '[:space:]')"
-  if (( asset_size > largest_size )); then
-    largest_size="${asset_size}"
-    largest_file="${asset}"
-  fi
-done < <(find build/web -type f -print0)
-
-if (( asset_count > pages_file_limit )); then
-  echo "Cloudflare Pages file limit exceeded: ${asset_count} > ${pages_file_limit}." >&2
-  exit 1
-fi
-
-if (( largest_size > pages_asset_limit_bytes )); then
-  echo "Cloudflare Pages asset limit exceeded: ${largest_file} is ${largest_size} bytes." >&2
-  exit 1
-fi
-
-printf 'Wasm release verified: %s files; largest asset %s bytes (%s).\n' \
-  "${asset_count}" "${largest_size}" "${largest_file}"
+bash "${script_dir}/check_pages_limits.sh" build/web 'Wasm release verified'
