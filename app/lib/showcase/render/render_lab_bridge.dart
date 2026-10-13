@@ -1,11 +1,8 @@
-import 'package:flame_3d/camera.dart';
 import 'package:flutter/foundation.dart';
 
-import '../../render/voxel_material.dart';
-import 'block_particle_pool.dart';
+import '../../render/voxel_renderer.dart';
 import 'frame_metrics.dart';
 import 'render_settings.dart';
-import 'target_outline.dart';
 
 /// Typed target for an already-created material's fog uniforms.
 abstract interface class FogUniformTarget {
@@ -108,9 +105,9 @@ final class RenderLabBridge extends ChangeNotifier {
 
   final RenderCapabilities capabilities;
   final FogUniformTarget? fogTarget;
-  final TargetOutline? targetOutline;
-  final BlockParticlePool? particlePool;
-  final CameraComponent3D? camera;
+  final TargetOutlineControls? targetOutline;
+  final BlockParticleEffects? particlePool;
+  final RenderCameraControls? camera;
   final FrameMetrics frameMetrics;
 
   RenderSettings _settings;

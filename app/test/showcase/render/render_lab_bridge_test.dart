@@ -1,9 +1,10 @@
 import 'package:flame_3d/camera.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:minedart/showcase/render/block_particle_pool.dart';
+import 'package:minedart/render/flame3d/block_particle_pool.dart';
+import 'package:minedart/render/flame3d/flame3d_voxel_renderer.dart';
+import 'package:minedart/render/flame3d/target_outline.dart';
 import 'package:minedart/showcase/render/render_lab_bridge.dart';
 import 'package:minedart/showcase/render/render_settings.dart';
-import 'package:minedart/showcase/render/target_outline.dart';
 
 final class _FogTarget implements FogUniformTarget {
   FogPreset? preset;
@@ -26,7 +27,7 @@ void main() {
         fogTarget: fog,
         targetOutline: outline,
         particlePool: particles,
-        camera: camera,
+        camera: Flame3dCameraControls(camera),
       );
       addTearDown(bridge.dispose);
       final mesh = outline.mesh;

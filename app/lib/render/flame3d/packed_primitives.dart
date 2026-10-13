@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flame_3d/resources.dart';
 import 'package:minedart_core/minedart_core.dart';
 
-import '../../render/packed_surface.dart';
+import 'packed_surface.dart';
 
 /// Immutable bounds used by the small, eagerly-built showcase meshes.
 final class PackedCuboid {

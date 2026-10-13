@@ -3,14 +3,7 @@ import 'dart:ui' hide FragmentShader;
 import 'package:flame_3d/graphics.dart';
 import 'package:flame_3d/resources.dart';
 
-abstract interface class VoxelMaterialControls {
-  void setFogRange(double start, double end);
-  void setRenderStyle({
-    required int debugView,
-    required double fogDensity,
-    required bool ambientOcclusion,
-  });
-}
+import '../voxel_renderer.dart' show VoxelMaterialControls;
 
 /// Atlas material that preserves per-vertex baked lighting/AO.
 final class VoxelMaterial extends Material implements VoxelMaterialControls {

@@ -4,6 +4,7 @@ import 'package:flame_3d/camera.dart';
 import 'package:flame_3d/components.dart';
 import 'package:flame_3d/resources.dart';
 
+import '../voxel_renderer.dart' show BlockParticleEffects;
 import 'packed_primitives.dart';
 
 /// One retained particle component. Instances are owned by
@@ -102,7 +103,8 @@ final class BlockParticle extends MeshComponent {
 /// reuses slots in round-robin order; update only mutates retained scalar and
 /// transform state. Enabling reduced motion clears the pool and suppresses new
 /// bursts.
-final class BlockParticlePool extends Component3D {
+final class BlockParticlePool extends Component3D
+    implements BlockParticleEffects {
   factory BlockParticlePool({
     int capacity = 96,
     int seed = 0x4D445254,
@@ -166,15 +168,19 @@ final class BlockParticlePool extends Component3D {
   int get capacity => _particles.length;
   int get activeCount => _activeCount;
   int get emittedCount => _serial;
+  @override
   bool get enabled => _enabled;
+  @override
   bool get reducedMotion => _reducedMotion;
 
+  @override
   set enabled(bool value) {
     if (_enabled == value) return;
     _enabled = value;
     if (!value) clear();
   }
 
+  @override
   set reducedMotion(bool value) {
     if (_reducedMotion == value) return;
     _reducedMotion = value;
@@ -226,6 +232,7 @@ final class BlockParticlePool extends Component3D {
     return emitCount;
   }
 
+  @override
   int emitBlock({
     required int blockId,
     required int x,

@@ -3,7 +3,7 @@ import 'dart:typed_data';
 import 'package:flame_3d/game.dart';
 import 'package:flame_3d/resources.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:minedart/render/packed_surface.dart';
+import 'package:minedart/render/flame3d/packed_surface.dart';
 import 'package:minedart_core/minedart_core.dart';
 
 void main() {
