@@ -24,7 +24,14 @@ const ALLOWED_ROOT_FILES = new Set([
   'manifest.json',
   'version.json',
 ]);
-const ALLOWED_ROOT_DIRECTORIES = new Set(['assets', 'canvaskit', 'icons']);
+// `flutter-scene` holds the experimental MINEDART_RENDERER=flutter_scene
+// build that pull-request previews serve under /flutter-scene/.
+const ALLOWED_ROOT_DIRECTORIES = new Set([
+  'assets',
+  'canvaskit',
+  'flutter-scene',
+  'icons',
+]);
 const REQUIRED_ROOT_FILES = new Set([
   '_headers',
   'flutter_bootstrap.js',
