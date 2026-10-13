@@ -15,12 +15,14 @@ import 'package:flutter/gestures.dart'
         PointerSignalEvent,
         kPrimaryMouseButton,
         kSecondaryMouseButton;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import 'crosshair.dart';
 import 'debug_overlay.dart';
 import 'hud_state.dart';
 import 'hotbar.dart';
+import '../diagnostics/diagnostics_snapshot.dart';
 import '../showcase/render/frame_metrics.dart';
 
 /// Overlay key registered with [GameWidget.overlayBuilderMap].
@@ -33,6 +35,7 @@ class HudOverlay extends StatefulWidget {
     required this.onPrimary,
     required this.onSecondary,
     this.frameMetrics,
+    this.diagnostics,
     this.touchControls,
     super.key,
   });
@@ -48,6 +51,7 @@ class HudOverlay extends StatefulWidget {
   /// Right click: place the selected block.
   final VoidCallback onSecondary;
   final FrameMetrics? frameMetrics;
+  final ValueListenable<DiagnosticsSnapshot>? diagnostics;
 
   /// Gesture controls are supplied by the runtime host, which owns callbacks.
   final Widget? touchControls;
@@ -84,6 +88,7 @@ class _HudOverlayState extends State<HudOverlay> {
                   child: DebugOverlay(
                     hud: widget.hud,
                     frameMetrics: widget.frameMetrics,
+                    diagnostics: widget.diagnostics,
                   ),
                 ),
               ],

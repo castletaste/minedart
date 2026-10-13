@@ -1,9 +1,12 @@
 import 'dart:async';
-
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 import '../../data/worlds/world_models.dart';
 import '../../data/worlds/world_repository.dart';
+import 'cleanup_errors.dart';
+import 'world_session_errors.dart';
+
+export 'world_session_errors.dart';
 
 /// Resources belonging to a world, independent of Flutter mounting and routes.
 abstract interface class WorldSessionRuntime {
@@ -27,61 +30,32 @@ abstract interface class WorldSessionHost {
   Future<void> remove(WorldSessionRuntime runtime);
 }
 
-sealed class WorldSessionResult<T> {
-  const WorldSessionResult();
-}
-
-final class WorldSessionSuccess<T> extends WorldSessionResult<T> {
-  const WorldSessionSuccess(this.value);
-  final T value;
-}
-
-final class WorldSessionCancelled<T> extends WorldSessionResult<T> {
-  const WorldSessionCancelled();
-}
-
-final class WorldSessionFailure<T> extends WorldSessionResult<T>
-    implements Exception {
-  const WorldSessionFailure(
-    this.error, {
-    this.activeWorldChanged = false,
-    this.durableStateChanged = false,
-    this.cleanupErrors = const [],
-  });
-
-  final Object error;
-  final bool activeWorldChanged;
-  final bool durableStateChanged;
-  final List<Object> cleanupErrors;
-
-  @override
-  String toString() =>
-      '$error${cleanupErrors.isEmpty ? '' : '; cleanup: ${cleanupErrors.join('; ')}'}';
-}
-
 typedef WorldRuntimeCreator =
     Future<WorldSessionRuntime> Function(WorldDocument document);
 
 /// One owner and one command queue. UI completions never own runtime cleanup.
-final class WorldSessionCoordinator extends ChangeNotifier {
+final class WorldSessionCoordinator {
   WorldSessionCoordinator({
     required WorldSessionRuntime initialRuntime,
     required this.repository,
     required this.createRuntime,
     required this.host,
+    this.onChanged,
   }) : _current = initialRuntime;
 
   final WorldRepository repository;
   final WorldRuntimeCreator createRuntime;
   final WorldSessionHost host;
+  final void Function()? onChanged;
   WorldSessionRuntime _current;
   Future<void> _tail = Future.value();
   Future<void>? _closing;
   final Set<WorldSessionRuntime> _retiring = {};
+  _SessionLifecycle _lifecycle = _SessionLifecycle.active;
   bool _disposed = false;
   bool _faulted = false;
   bool _unsafeToSave = false;
-  bool _closed = false;
+  int _epoch = 0;
   bool _closeSaveAttempted = false;
   bool _currentReleased = false;
   int _pending = 0;
@@ -89,10 +63,16 @@ final class WorldSessionCoordinator extends ChangeNotifier {
   WorldSessionRuntime get current => _current;
   bool get isBusy => _pending > 0;
   bool get isFaulted => _faulted;
-  bool get _stopping => _closed || _closing != null || !host.isAttached;
+
+  /// Monotonic token for callers that own additional async work for a world.
+  /// Any value captured before [close] is stale after the close begins.
+  int get operationEpoch => _epoch;
+  bool get _stopping =>
+      _lifecycle != _SessionLifecycle.active || !host.isAttached;
 
   Future<WorldSessionResult<T>> _run<T>(Future<T> Function() command) {
     if (_stopping || _faulted) return Future.value(WorldSessionCancelled<T>());
+    final epoch = _epoch;
     final completion = Completer<WorldSessionResult<T>>();
     _pending++;
     _publish();
@@ -103,17 +83,18 @@ final class WorldSessionCoordinator extends ChangeNotifier {
           completion.complete(WorldSessionCancelled<T>());
         } else {
           final value = await command();
-          completion.complete(WorldSessionSuccess(value));
+          completion.complete(
+            epoch == _epoch && !_stopping
+                ? WorldSessionSuccess(value)
+                : WorldSessionCancelled<T>(),
+          );
         }
       } on _SessionClosing {
         completion.complete(WorldSessionCancelled<T>());
-      } on WorldSessionFailure catch (failure) {
+      } on WorldSessionException catch (failure) {
         completion.complete(
-          WorldSessionFailure<T>(
-            failure.error,
+          failure.toFailure<T>(
             activeWorldChanged: !identical(before, _current),
-            durableStateChanged: failure.durableStateChanged,
-            cleanupErrors: failure.cleanupErrors,
           ),
         );
       } catch (error) {
@@ -149,7 +130,7 @@ final class WorldSessionCoordinator extends ChangeNotifier {
         try {
           await _replace(document);
         } catch (error) {
-          throw _failure<void>(error, durable: true);
+          throw _failure(error, durable: true);
         }
       });
 
@@ -174,7 +155,7 @@ final class WorldSessionCoordinator extends ChangeNotifier {
           _current.replaceMetadata(summary.metadata);
         } catch (error) {
           _faulted = _unsafeToSave = true;
-          throw _failure<void>(error, durable: true);
+          throw _failure(error, durable: true);
         }
       }
     }, durableChanged: () => written);
@@ -261,14 +242,14 @@ final class WorldSessionCoordinator extends ChangeNotifier {
     }
     if (primaryError is _SessionClosing && cleanup.isEmpty) throw primaryError;
     if (primaryError != null) {
-      throw _failure<T>(
+      throw _failure(
         primaryError,
         durable: durableChanged?.call() ?? false,
         cleanup: cleanup,
       );
     }
     if (cleanup.isNotEmpty) {
-      throw _failure<T>(
+      throw _failure(
         cleanup.first,
         durable: durableChanged?.call() ?? false,
         cleanup: cleanup.skip(1),
@@ -347,12 +328,12 @@ final class WorldSessionCoordinator extends ChangeNotifier {
         }
       }
       if (error is _SessionClosing && cleanup.isEmpty) rethrow;
-      throw _failure<void>(error, durable: written, cleanup: cleanup);
+      throw _failure(error, durable: written, cleanup: cleanup);
     }
     try {
       await _retire(previous);
     } catch (error) {
-      throw _failure<void>(error, durable: previousSnapshot != null);
+      throw _failure(error, durable: previousSnapshot != null);
     }
   }
 
@@ -362,10 +343,14 @@ final class WorldSessionCoordinator extends ChangeNotifier {
       runtime.resume();
     } catch (error) {
       _faulted = true;
+      final cleanupErrors = CleanupErrors();
       try {
         await runtime.quiesce();
       } catch (cleanup) {
-        throw WorldSessionFailure<void>(error, cleanupErrors: [cleanup]);
+        cleanupErrors.add(cleanup);
+      }
+      if (!cleanupErrors.isEmpty) {
+        throw WorldSessionException(error, cleanupErrors: cleanupErrors.values);
       }
       rethrow;
     }
@@ -383,13 +368,16 @@ final class WorldSessionCoordinator extends ChangeNotifier {
   }
 
   Future<void> close() {
-    if (_closed) return Future.value();
+    if (_lifecycle == _SessionLifecycle.closed) return Future.value();
+    if (_closing case final closing?) return closing;
+    _epoch++;
+    _lifecycle = _SessionLifecycle.closing;
     return _closing ??= _close();
   }
 
   Future<void> _close() async {
     await _tail;
-    final errors = <Object>[];
+    final errors = CleanupErrors();
     try {
       if (!_currentReleased) {
         await _current.quiesce();
@@ -410,25 +398,21 @@ final class WorldSessionCoordinator extends ChangeNotifier {
         errors.add(error);
       }
     }
-    if (errors.isNotEmpty) {
+    if (!errors.isEmpty) {
       _faulted = true;
+      _lifecycle = _SessionLifecycle.active;
       _closing = null;
-      throw WorldSessionFailure<void>(
-        errors.first,
-        cleanupErrors: errors.skip(1).toList(),
-      );
+      throw WorldSessionException(errors.first, cleanupErrors: errors.rest);
     }
-    _closed = true;
+    _lifecycle = _SessionLifecycle.closed;
   }
 
   void _publish() {
-    if (!_disposed) notifyListeners();
+    if (!_disposed) onChanged?.call();
   }
 
-  @override
   void dispose() {
     _disposed = true;
-    super.dispose();
   }
 }
 
@@ -436,22 +420,26 @@ final class _SessionClosing implements Exception {
   const _SessionClosing();
 }
 
-WorldSessionFailure<T> _failure<T>(
+enum _SessionLifecycle { active, closing, closed }
+
+WorldSessionException _failure(
   Object error, {
   bool durable = false,
   Iterable<Object> cleanup = const [],
 }) {
-  if (error is WorldSessionFailure) {
-    return WorldSessionFailure<T>(
+  if (error is WorldSessionException) {
+    final cleanupErrors = CleanupErrors()..addAll(error.cleanupErrors);
+    cleanupErrors.addAll(cleanup);
+    return WorldSessionException(
       error.error,
-      activeWorldChanged: error.activeWorldChanged,
       durableStateChanged: durable || error.durableStateChanged,
-      cleanupErrors: List.unmodifiable([...error.cleanupErrors, ...cleanup]),
+      cleanupErrors: cleanupErrors.values,
     );
   }
-  return WorldSessionFailure<T>(
+  final cleanupErrors = CleanupErrors()..addAll(cleanup);
+  return WorldSessionException(
     error,
     durableStateChanged: durable,
-    cleanupErrors: List.unmodifiable(cleanup),
+    cleanupErrors: cleanupErrors.values,
   );
 }

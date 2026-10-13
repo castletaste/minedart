@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:minedart/audio/audio.dart';
 import 'package:minedart/data/worlds/worlds.dart';
+import 'package:minedart/game/game_host_port.dart';
 import 'package:minedart/game/minedart_game.dart';
 import 'package:minedart/hud/hud_overlay.dart';
 import 'package:minedart/input/game_input_service.dart';
@@ -39,7 +40,9 @@ void main() {
     );
     await tester.pump();
     var movementEvents = 0;
-    harness.runtime.game.onMovementActivity = () => movementEvents++;
+    harness.runtime.game.hostPort = _TestHostPort(
+      onMovement: () => movementEvents++,
+    );
 
     for (final key in [
       LogicalKeyboardKey.keyW,
@@ -70,7 +73,9 @@ void main() {
     );
     await tester.pump();
     var movementEvents = 0;
-    harness.runtime.game.onMovementActivity = () => movementEvents++;
+    harness.runtime.game.hostPort = _TestHostPort(
+      onMovement: () => movementEvents++,
+    );
 
     await tester.sendKeyEvent(LogicalKeyboardKey.keyE);
     await tester.pumpAndSettle();
@@ -116,7 +121,9 @@ void main() {
     );
     await tester.pump();
     var movementEvents = 0;
-    harness.runtime.game.onMovementActivity = () => movementEvents++;
+    harness.runtime.game.hostPort = _TestHostPort(
+      onMovement: () => movementEvents++,
+    );
     otherFocus.requestFocus();
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.keyW);
@@ -168,8 +175,12 @@ void main() {
       await tester.pump();
       var initialEvents = 0;
       var candidateEvents = 0;
-      initial.runtime.game.onMovementActivity = () => initialEvents++;
-      candidate.runtime.game.onMovementActivity = () => candidateEvents++;
+      initial.runtime.game.hostPort = _TestHostPort(
+        onMovement: () => initialEvents++,
+      );
+      candidate.runtime.game.hostPort = _TestHostPort(
+        onMovement: () => candidateEvents++,
+      );
 
       final staging = host.stage(candidate.runtime);
       await tester.pump();
@@ -519,8 +530,8 @@ void main() {
 Future<WorldSessionFailure<void>> _failureOf(Future<void> operation) async {
   try {
     await operation;
-  } on WorldSessionFailure<void> catch (failure) {
-    return failure;
+  } on WorldSessionException catch (failure) {
+    return failure.toFailure<void>();
   }
   throw TestFailure('Expected WorldSessionFailure');
 }
@@ -743,7 +754,27 @@ final class _Pipeline implements MeshPipelineBase {
     await _results.close();
     if (closeError case final error?) throw error;
   }
+}
 
+final class _TestHostPort implements MinedartGameHostPort {
+  const _TestHostPort({this.onMovement});
+
+  final VoidCallback? onMovement;
+
+  @override
+  void pauseRequested() {}
+
+  @override
+  void movementActivity() => onMovement?.call();
+
+  @override
+  void playerViewChanged() {}
+
+  @override
+  void worldChanged() {}
+
+  @override
+  void fogPresetChanged(FogPreset preset) {}
 }
 
 /// Registers a backend so constructing a real Flame game stays GPU-free.

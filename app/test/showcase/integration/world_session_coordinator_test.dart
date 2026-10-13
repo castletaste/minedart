@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,16 @@ import 'package:minedart_core/minedart_core.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('operation epoch invalidates async ownership at close', () async {
+    final h = Harness();
+    expect(h.session.operationEpoch, 0);
+    final closing = h.session.close();
+    expect(h.session.operationEpoch, 1);
+    await closing;
+    h.session.dispose();
+    expect(h.session.operationEpoch, 1);
+  });
 
   test(
     'switch retains old runtime until candidate is ready and removed',
@@ -115,10 +126,9 @@ void main() {
   }
 
   test('dispose detaches observers while accepted cleanup completes', () async {
-    final h = Harness();
-    final gate = h.gate('stage:next');
     int notifications = 0;
-    h.session.addListener(() => notifications++);
+    final h = Harness(onChanged: () => notifications++);
+    final gate = h.gate('stage:next');
     final operation = h.session.switchWorld(document('next'));
     await h.reached('stage:next');
     h.session.dispose();
@@ -227,7 +237,7 @@ void main() {
       final h = Harness()..fail('release:old');
       await expectLater(
         h.session.close(),
-        throwsA(isA<WorldSessionFailure<void>>()),
+        throwsA(isA<WorldSessionException>()),
       );
       expect(h.session.isFaulted, isTrue);
       await h.session.close();
@@ -243,7 +253,7 @@ void main() {
       final h = Harness()..fail('save:old');
       await expectLater(
         h.session.close(),
-        throwsA(isA<WorldSessionFailure<void>>()),
+        throwsA(isA<WorldSessionException>()),
       );
       final events = h.events.toList();
       await h.session.close();
@@ -294,6 +304,70 @@ void main() {
       await h.close();
     },
   );
+  for (final seed in [17, 43, 2026]) {
+    test('seeded session commands preserve ownership (seed $seed)', () async {
+      final random = Random(seed);
+      final h = Harness();
+      final base = document('old');
+      var expected = 'old';
+      for (var batch = 0; batch < 24; batch++) {
+        final operations = <Future<WorldSessionResult<void>>>[];
+        final failures = <bool>[];
+        for (var command = 0; command < 1 + random.nextInt(4); command++) {
+          if (random.nextBool()) {
+            operations.add(h.session.saveCurrent());
+            failures.add(false);
+          } else {
+            final id = 'world-$seed-$batch-$command';
+            final fail = random.nextInt(4) == 0;
+            if (fail) h.fail('stage:$id');
+            operations.add(
+              h.session.switchWorld(
+                base.copyWith(
+                  metadata: base.metadata.copyWith(id: id, name: id),
+                ),
+              ),
+            );
+            failures.add(fail);
+            if (!fail) expected = id;
+          }
+        }
+        final results = await Future.wait(operations);
+        for (var i = 0; i < results.length; i++) {
+          expect(
+            results[i],
+            failures[i]
+                ? isA<WorldSessionFailure<void>>()
+                : isA<WorldSessionSuccess<void>>(),
+            reason: 'seed=$seed batch=$batch command=$i',
+          );
+        }
+        expect(h.session.current.worldId, expected);
+        expect(h.session.isBusy, isFalse);
+        expect(h.session.isFaulted, isFalse);
+        final current = h.session.current as Runtime;
+        expect(current.running, isTrue);
+        expect(h.runtimes.where((runtime) => runtime.running), [current]);
+        expect(h.runtimes.where((runtime) => runtime.releases == 0), [current]);
+        expect(h.runtimes.every((runtime) => runtime.releases <= 1), isTrue);
+      }
+      await h.close();
+      final afterClose = List<String>.of(h.events);
+      expect(await h.session.saveCurrent(), isA<WorldSessionCancelled<void>>());
+      expect(
+        await h.session.switchWorld(base),
+        isA<WorldSessionCancelled<void>>(),
+      );
+      await h.session.close();
+      expect(h.events, afterClose);
+      expect(
+        h.runtimes.every(
+          (runtime) => runtime.releases == 1 && !runtime.running,
+        ),
+        isTrue,
+      );
+    });
+  }
 }
 
 final _documents = <String, WorldDocument>{};
@@ -315,7 +389,7 @@ WorldDocument document(String id, {String? name}) => _documents.putIfAbsent(
 );
 
 final class Harness {
-  Harness() {
+  Harness({void Function()? onChanged}) {
     old = Runtime(this, document('old'))..running = true;
     repo = Repository(this);
     host = Host(this);
@@ -323,6 +397,7 @@ final class Harness {
       initialRuntime: old,
       repository: repo,
       host: host,
+      onChanged: onChanged,
       createRuntime: (doc) async {
         await call('allocate:${doc.metadata.id}');
         return Runtime(this, doc);
@@ -330,6 +405,7 @@ final class Harness {
     );
   }
   final events = <String>[];
+  final runtimes = <Runtime>[];
   final _gates = <String, Completer<void>>{};
   final _reached = <String, Completer<void>>{};
   final _failures = <String>{};
@@ -360,11 +436,14 @@ final class Harness {
 }
 
 final class Runtime implements WorldSessionRuntime {
-  Runtime(this.h, WorldDocument doc) : metadata = doc.metadata;
+  Runtime(this.h, WorldDocument doc) : metadata = doc.metadata {
+    h.runtimes.add(this);
+  }
   final Harness h;
   @override
   WorldMetadata metadata;
   bool running = false;
+  int releases = 0;
   String get _label => metadata.name == 'reset' ? '$worldId-reset' : worldId;
   @override
   String get worldId => metadata.id;
@@ -389,7 +468,11 @@ final class Runtime implements WorldSessionRuntime {
   }
 
   @override
-  Future<void> release() => h.call('release:$_label');
+  Future<void> release() async {
+    await h.call('release:$_label');
+    releases++;
+    running = false;
+  }
 }
 
 final class Host implements WorldSessionHost {
